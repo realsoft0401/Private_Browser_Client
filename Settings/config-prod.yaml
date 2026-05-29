@@ -1,0 +1,10 @@
+name: private-browser-client
+mode: prod
+version: 0.1.0
+server:
+  host: 0.0.0.0
+  port: 3300
+  read_timeout_seconds: 15
+  write_timeout_seconds: 15
+docker:
+  api_url: http://127.0.0.1:2375

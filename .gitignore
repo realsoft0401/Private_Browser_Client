@@ -1,0 +1,13 @@
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# 本机 Go 构建缓存和编译产物，只用于开发加速，不能进入仓库。
+.tmp/
+private_browser_client
+
+# macOS / IDE 本地文件，不属于项目运行机制。
+.DS_Store
+.idea/

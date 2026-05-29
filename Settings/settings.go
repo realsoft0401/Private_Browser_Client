@@ -1,0 +1,133 @@
+package Settings
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/fsnotify/fsnotify"
+	"github.com/spf13/viper"
+)
+
+var (
+	// BuildEnv 用于在编译阶段注入默认环境，例如：
+	// go build -ldflags "-X private_browser_client/Settings.BuildEnv=prod"
+	BuildEnv = ""
+
+	// Conf 持有当前服务进程的全局配置。
+	Conf = new(AppConfig)
+
+	configEngine = viper.New()
+)
+
+type AppConfig struct {
+	Name    string `mapstructure:"name"`
+	Mode    string `mapstructure:"mode"`
+	Version string `mapstructure:"version"`
+	// ProjectRoot / ConfigFile / Env 是运行期补进去的元信息，不从 yaml 直接反序列化。
+	// 它们主要服务于排障和健康检查，避免服务起来后还不知道自己到底读了哪份配置。
+	ProjectRoot   string `mapstructure:"-"`
+	ConfigFile    string `mapstructure:"-"`
+	Env           string `mapstructure:"-"`
+	*ServerConfig `mapstructure:"server"`
+	*DockerConfig `mapstructure:"docker"`
+}
+
+// ServerConfig 描述当前 Go 边缘服务自身的监听参数。
+// 它不表示中心服务端地址，后续不要把上报目标、中心节点配置和本机监听配置混写到一起。
+type ServerConfig struct {
+	Host                string `mapstructure:"host"`
+	Port                int    `mapstructure:"port"`
+	ReadTimeoutSeconds  int    `mapstructure:"read_timeout_seconds"`
+	WriteTimeoutSeconds int    `mapstructure:"write_timeout_seconds"`
+}
+
+// DockerConfig 描述边缘服务访问本机 Docker Engine 的方式。
+//
+// 设计来源：
+// - `Private_Browser_Client` 已重新定位为边缘服务，不再保存多节点列表；
+// - 边缘服务只读取和管理本机 Docker，所以这里配置的是本机 Docker API 地址；
+// - 默认使用 Docker Engine HTTP 2375，后续如果改成本地 socket 或 TLS 2376，应只扩展这一配置和 Edge Service。
+type DockerConfig struct {
+	APIURL string `mapstructure:"api_url"`
+}
+
+// Init 负责加载当前运行环境的配置文件。
+//
+// 这个配置入口的来历：
+// - 用户之前已经明确提出需要 dev / test / prod 三套环境配置；
+// - 现在项目从桌面端切回纯服务端后，这个入口继续承担“按环境装配配置”的职责；
+// - 后续新增 Redis、任务队列或第三方服务时，也应继续通过这里统一挂载，避免业务层直接读环境变量形成隐式依赖。
+func Init(projectRoot string) error {
+	env := resolveEnv()
+	configFile := filepath.Join(projectRoot, "Settings", fmt.Sprintf("config-%s.yaml", env))
+
+	configEngine = viper.New()
+	configEngine.SetConfigFile(configFile)
+	configEngine.SetConfigType("yaml")
+	configEngine.SetDefault("name", "private-browser-client")
+	configEngine.SetDefault("mode", env)
+	configEngine.SetDefault("version", "0.1.0")
+	configEngine.SetDefault("server.host", "0.0.0.0")
+	configEngine.SetDefault("server.port", 3300)
+	configEngine.SetDefault("server.read_timeout_seconds", 15)
+	configEngine.SetDefault("server.write_timeout_seconds", 15)
+	configEngine.SetDefault("docker.api_url", "http://127.0.0.1:2375")
+
+	if err := configEngine.ReadInConfig(); err != nil {
+		return fmt.Errorf("read config failed: %w", err)
+	}
+	if err := configEngine.Unmarshal(Conf); err != nil {
+		return fmt.Errorf("unmarshal config failed: %w", err)
+	}
+
+	Conf.ProjectRoot = projectRoot
+	Conf.ConfigFile = configFile
+	Conf.Env = env
+	if Conf.ServerConfig == nil {
+		Conf.ServerConfig = &ServerConfig{}
+	}
+	if Conf.DockerConfig == nil {
+		Conf.DockerConfig = &DockerConfig{}
+	}
+
+	configEngine.WatchConfig()
+	// 这里保留热加载，是因为配置文件在本地开发和部署阶段都可能被手动修改。
+	// 但要注意：当前只更新内存配置对象，不自动重启 HTTP Server 或重新连库，避免运行中出现不可控副作用。
+	configEngine.OnConfigChange(func(event fsnotify.Event) {
+		updated := new(AppConfig)
+		if err := configEngine.Unmarshal(updated); err != nil {
+			fmt.Printf("reload config failed, err:%v\n", err)
+			return
+		}
+		updated.ProjectRoot = projectRoot
+		updated.ConfigFile = configFile
+		updated.Env = env
+		if updated.ServerConfig == nil {
+			updated.ServerConfig = &ServerConfig{}
+		}
+		if updated.DockerConfig == nil {
+			updated.DockerConfig = &DockerConfig{}
+		}
+		Conf = updated
+		fmt.Printf("config reloaded: %s\n", event.Name)
+	})
+
+	return nil
+}
+
+// resolveEnv 统一决定当前运行环境。
+//
+// 优先级保持成：运行时 `ENV` > 编译时 `BuildEnv` > 默认 `dev`。
+// 这个顺序是为了兼顾本地开发、CI 构建和部署覆盖，后续不要在别处再写一套环境判断逻辑。
+func resolveEnv() string {
+	env := strings.TrimSpace(os.Getenv("ENV"))
+	if env == "" {
+		env = strings.TrimSpace(BuildEnv)
+	}
+	if env == "" {
+		env = "dev"
+	}
+	return strings.ToLower(env)
+}

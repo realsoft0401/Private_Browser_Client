@@ -1,0 +1,1377 @@
+openapi: 3.0.3
+info:
+  title: Private Browser Client Edge API
+  version: 0.2.0
+  description: |
+    Private_Browser_Client 当前定位为边缘服务，只暴露本机设备与本机 Docker 能力。
+    用户、节点列表、设备归属、设备编号等中心控制能力应放到未来 Private_Browser_Server。
+servers:
+  - url: http://127.0.0.1:3300
+    description: 本地开发环境
+paths:
+  /health:
+    get:
+      summary: 服务健康检查
+      tags: [System]
+      responses:
+        '200':
+          description: 服务状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/v1/edge/device-info:
+    get:
+      summary: 获取本机设备能力信息
+      description: 请求本机 Docker Engine API 的 /_ping、/info、/version，返回本机设备和 Docker 能力摘要。不写数据库，不需要 nodeId。
+      tags: [Edge]
+      responses:
+        '200':
+          description: 本机设备能力
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceInfoSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  deviceIp: 127.0.0.1
+                  dockerApiUrl: http://127.0.0.1:2375
+                  deviceOs: Docker Desktop
+                  deviceArch: arm64
+                  deviceRawArch: arm64
+                  cpuCores: 8
+                  memoryTotalBytes: 8321994752
+                  dockerVersion: 29.5.2
+                  dockerApiVersion: "1.54"
+                  composeVersion: ""
+                  lastDockerStatus: available
+                  lastDockerMessage: ok
+                  lastImagesCount: 25
+                  lastContainersCount: 11
+                  checkedAt: 1779956193
+  /api/v1/edge/docker/status:
+    get:
+      summary: 获取本机 Docker 状态
+      description: 返回本机 Docker daemon 可用性、镜像数量和容器数量。完整镜像/容器列表后续通过独立接口扩展。
+      tags: [Edge]
+      responses:
+        '200':
+          description: 本机 Docker 状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DockerStatusSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  dockerApiUrl: http://127.0.0.1:2375
+                  status: available
+                  message: ok
+                  imagesCount: 25
+                  containersCount: 11
+                  checkedAt: 1779956193
+  /api/v1/edge/docker/images:
+    get:
+      summary: 获取本机 Docker 镜像列表
+      description: 请求本机 Docker Engine API 的 /images/json，返回镜像 ID、标签、摘要、创建时间和大小等摘要字段。不写数据库，不需要 nodeId。
+      tags: [Edge]
+      responses:
+        '200':
+          description: 本机镜像列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DockerImagesSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  - id: sha256:example
+                    repoTags: ["crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0"]
+                    repoDigests: []
+                    created: 1779956193
+                    size: 123456789
+                    virtualSize: 123456789
+                    sharedSize: -1
+                    containers: -1
+  /api/v1/edge/docker/containers:
+    get:
+      summary: 获取本机 Docker 容器列表
+      description: 请求本机 Docker Engine API 的 /containers/json?all=true，返回运行中和已停止容器摘要。不写数据库，不需要 nodeId。
+      tags: [Edge]
+      responses:
+        '200':
+          description: 本机容器列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DockerContainersSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  - id: abc123
+                    names: ["/browser-001"]
+                    image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+                    imageId: sha256:example
+                    command: "/start.sh"
+                    created: 1779956193
+                    ports:
+                      - ip: 0.0.0.0
+                        privatePort: 5900
+                        publicPort: 5901
+                        type: tcp
+                    labels: {}
+                    state: running
+                    status: Up 10 minutes
+  /api/v1/edge/docker/pull-image:
+    post:
+      summary: 拉取本机 Docker 镜像
+      description: 调用本机 Docker Engine API 的 /images/create 拉取镜像。该接口会改变本机 Docker 状态，但不写数据库。
+      tags: [Edge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PullImageRequest'
+            examples:
+              alpine:
+                summary: 拉取 alpine:latest
+                value:
+                  image: alpine:latest
+              explicitTag:
+                summary: 镜像名和 tag 分开传
+                value:
+                  image: alpine
+                  tag: latest
+      responses:
+        '200':
+          description: Docker 拉取事件列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DockerPullEventsSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  - status: Pulling from library/alpine
+                  - status: Download complete
+                    id: latest
+  /api/v1/edge/docker/remove-image:
+    post:
+      summary: 删除本机 Docker 镜像
+      description: 调用本机 Docker Engine API 删除镜像。该接口会改变本机 Docker 状态，请谨慎使用。
+      tags: [Edge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveImageRequest'
+            example:
+              image: alpine:latest
+              force: false
+              noPrune: false
+      responses:
+        '200':
+          description: Docker 删除镜像结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DockerImageRemoveSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  - untagged: alpine:latest
+                  - deleted: sha256:example
+  /api/v1/edge/containers/{id}/start:
+    post:
+      summary: 启动本机 Docker 容器
+      description: 调用本机 Docker Engine API 的 /containers/{id}/start。该接口只操作本机 Docker，不写数据库，不需要 nodeId。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/ContainerId'
+      responses:
+        '200':
+          description: 容器启动结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContainerActionSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  containerId: abc123
+                  action: start
+                  status: success
+                  message: ok
+                  checkedAt: 1779956193
+  /api/v1/edge/containers/{id}/stop:
+    post:
+      summary: 停止本机 Docker 容器
+      description: 调用本机 Docker Engine API 的 /containers/{id}/stop。请求体可为空；不传 timeoutSeconds 时默认等待 10 秒。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/ContainerId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContainerActionRequest'
+            example:
+              timeoutSeconds: 10
+      responses:
+        '200':
+          description: 容器停止结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContainerActionSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  containerId: abc123
+                  action: stop
+                  status: success
+                  message: ok
+                  checkedAt: 1779956193
+  /api/v1/edge/containers/{id}/restart:
+    post:
+      summary: 重启本机 Docker 容器
+      description: 调用本机 Docker Engine API 的 /containers/{id}/restart。请求体可为空；不传 timeoutSeconds 时默认等待 10 秒。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/ContainerId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContainerActionRequest'
+            example:
+              timeoutSeconds: 10
+      responses:
+        '200':
+          description: 容器重启结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContainerActionSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  containerId: abc123
+                  action: restart
+                  status: success
+                  message: ok
+                  checkedAt: 1779956193
+  /api/v1/edge/browser-envs:
+    get:
+      summary: 查询本机浏览器环境包列表
+      description: 从本机 SQLite browser_envs 索引表查询环境包摘要。默认排除 status=deleted；如需查看回收站，显式传 status=deleted。
+      tags: [Edge]
+      parameters:
+        - name: userId
+          in: query
+          required: false
+          description: 按用户 ID 筛选，必须是数字字符串。
+          schema:
+            type: string
+          example: "318275706305908736"
+        - name: rpaType
+          in: query
+          required: false
+          description: 按 RPA 类型筛选。
+          schema:
+            type: string
+            enum: [tk, fb, ins, yt, x, other]
+          example: tk
+        - name: status
+          in: query
+          required: false
+          description: 按环境包生命周期状态筛选；不传时默认排除 deleted。
+          schema:
+            type: string
+            enum: [created, running, stopped, deleted, archived, error]
+          example: created
+        - name: page
+          in: query
+          required: false
+          description: 页码，默认 1。
+          schema:
+            type: integer
+            default: 1
+          example: 1
+        - name: pageSize
+          in: query
+          required: false
+          description: 每页数量，默认 20，最大 100。
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+          example: 20
+      responses:
+        '200':
+          description: 环境包列表和统计
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListBrowserEnvSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  total: 1
+                  page: 1
+                  pageSize: 20
+                  byStatus:
+                    created: 1
+                  byRpaType:
+                    tk: 1
+                  items:
+                    - envId: 318275706305908736_tk_918273645001
+                      userId: "318275706305908736"
+                      rpaType: tk
+                      name: tk-browser-001
+                      envSequence: 1
+                      cdpPort: 8101
+                      vncPort: 9101
+                      vncUrl: vnc://127.0.0.1:9101
+                      vncWsUrl: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
+                      webVncUrl: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+                      envPath: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+                      status: running
+                      containerName: bv-318275706305908736-tk-918273645001
+                      containerStatus: running
+                      monitorStatus: unknown
+                      fingerprintRestored: false
+                      hasBrowserData: true
+                      createdAt: 1779956193
+                      updatedAt: 1779956193
+    post:
+      summary: 创建本地浏览器环境包
+      description: 接收服务端下发的浏览器环境配置，生成本地可迁移环境包文件。该接口不创建或启动 Docker 容器。
+      tags: [Edge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBrowserEnvRequest'
+            example:
+              userId: "318275706305908736"
+              rpaType: tk
+              name: tk-browser-001
+              runtime:
+                image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+                startupUrl: about:blank
+                shmSize: 1g
+              environment:
+                timezone: America/Toronto
+                language: en-US
+                screen:
+                  width: 1366
+                  height: 768
+                  depth: 24
+              proxy:
+                enabled: true
+                type: clash-verge
+                config: "mode: rule\nmixed-port: 7897\n"
+              fingerprint:
+                backup: null
+              metadata:
+                description: TikTok browser env
+      responses:
+        '200':
+          description: 环境包创建结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateBrowserEnvSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  envId: 318275706305908736_tk_918273645001
+                  userId: "318275706305908736"
+                  rpaType: tk
+                  envSequence: 1
+                  ports:
+                    cdp: 8101
+                    vnc: 9101
+                  envPath: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+                  files:
+                    manifest: manifest.json
+                    profile: profile.json
+                    binding: binding.json
+                    container: container.json
+                    proxyConfig: proxy/clash.yaml
+                    fingerprintSnapshot: fingerprint/snapshot.json
+                    fingerprintBackup: fingerprint/backup.json
+                    fingerprintRuntimeConfig: fingerprint/runtime-config.json
+                    browserData: browser-data/profile
+                  identityHash: sha256:xxx
+                  configHash: sha256:xxx
+                  createdAt: 1779956193
+  /api/v1/edge/browser-envs/{envId}:
+    get:
+      summary: 获取本地浏览器环境包详情
+      description: 从 SQLite 索引和本地环境包文件读取详情。响应包含 manifest/profile/binding/container、代理摘要、指纹摘要和一致性检查；不返回 proxy/clash.yaml 明文，也不返回 fingerprint raw。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      responses:
+        '200':
+          description: 环境包详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserEnvDetailSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  index:
+                    envId: 318275706305908736_tk_918273645001
+                    userId: "318275706305908736"
+                    rpaType: tk
+                    name: tk-browser-001
+                    envSequence: 1
+                    cdpPort: 8101
+                    vncPort: 9101
+                    status: running
+                    containerStatus: running
+                    monitorStatus: unknown
+                    fingerprintRestored: false
+                    hasBrowserData: true
+                    createdAt: 1779956193
+                    updatedAt: 1779956193
+                  manifest:
+                    envId: 318275706305908736_tk_918273645001
+                    userId: "318275706305908736"
+                    rpaType: tk
+                    envSequence: 1
+                  profile:
+                    name: tk-browser-001
+                    runtime:
+                      image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+                      enableVnc: true
+                    ports:
+                      cdp: 8101
+                      vnc: 9101
+                  binding:
+                    id: binding-318275706305908736-tk-918273645001
+                    version: 1
+                    locked: false
+                    identityHash: sha256:xxx
+                    configHash: sha256:xxx
+                  proxy:
+                    enabled: true
+                    type: clash-verge
+                    configPath: proxy/clash.yaml
+                    configHash: sha256:xxx
+                    configSizeBytes: 27
+                  fingerprint:
+                    snapshot:
+                      ok: false
+                    backup:
+                      available: false
+                      hasFingerprint: false
+                    runtimeConfig:
+                      available: false
+                  consistency:
+                    manifestMatchesIndex: true
+                    identityHashMatches: true
+                    proxyConfigExists: true
+                    browserDataExists: true
+                    errors: []
+                  files:
+                    manifest: manifest.json
+                    profile: profile.json
+                    binding: binding.json
+                    container: container.json
+                    proxyConfig: proxy/clash.yaml
+                    fingerprintSnapshot: fingerprint/snapshot.json
+                    fingerprintBackup: fingerprint/backup.json
+                    fingerprintRuntimeConfig: fingerprint/runtime-config.json
+                    browserData: browser-data/profile
+                  vnc:
+                    vncUrl: vnc://127.0.0.1:9101
+                    vncWsUrl: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
+                    webVncUrl: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+  /api/v1/edge/browser-envs/{envId}/run:
+    post:
+      summary: 启动本地浏览器环境包
+      description: 按 envId 读取本机环境包文件，创建或启动对应 Docker 浏览器容器。镜像、端口、代理、指纹和挂载都来自环境包；该接口不接受 Docker 参数透传。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunBrowserEnvRequest'
+            example:
+              forceRecreate: false
+      responses:
+        '200':
+          description: 环境包运行结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunBrowserEnvSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  envId: 318275706305908736_tk_918273645001
+                  containerId: abc123
+                  containerName: bv-318275706305908736-tk-918273645001
+                  image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+                  status: running
+                  ports:
+                    cdp: 8101
+                    vnc: 9101
+                  cdpUrl: http://127.0.0.1:8101
+                  vncUrl: vnc://127.0.0.1:9101
+                  dockerApiUrl: http://127.0.0.1:2375
+                  deviceArch: arm64
+                  startedAt: 1779956193
+                  reused: false
+  /api/v1/edge/browser-envs/{envId}/vnc-info:
+    get:
+      summary: 获取浏览器版 VNC 连接信息
+      description: 返回 envId 对应环境包的 VNC 端口、vnc:// 地址、WebSocket 地址和浏览器 Web VNC 页面地址。推荐前端使用 webVncUrl。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      responses:
+        '200':
+          description: VNC 连接信息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserEnvVNCInfoSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  envId: 318275706305908736_tk_918273645001
+                  vncPort: 9101
+                  vncUrl: vnc://127.0.0.1:9101
+                  wsUrl: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
+                  webVncUrl: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+components:
+  parameters:
+    ContainerId:
+      name: id
+      in: path
+      required: true
+      description: Docker 容器 ID 或容器名称。
+      schema:
+        type: string
+      example: abc123
+    BrowserEnvId:
+      name: envId
+      in: path
+      required: true
+      description: 浏览器环境包 ID。
+      schema:
+        type: string
+      example: 318275706305908736_tk_918273645001
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        service:
+          type: string
+          example: private-browser-client
+        mode:
+          type: string
+          example: dev
+        version:
+          type: string
+          example: 0.1.0
+        configFile:
+          type: string
+          example: /path/to/Settings/config-dev.yaml
+        dockerApi:
+          type: string
+          example: http://127.0.0.1:2375
+    StandardSuccess:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+        data:
+          nullable: true
+    DeviceInfo:
+      type: object
+      properties:
+        deviceIp:
+          type: string
+          example: 127.0.0.1
+        dockerApiUrl:
+          type: string
+          example: http://127.0.0.1:2375
+        deviceOs:
+          type: string
+          example: Docker Desktop
+        deviceArch:
+          type: string
+          enum: [amd64, arm64, unknown]
+          example: arm64
+        deviceRawArch:
+          type: string
+          example: arm64
+        cpuCores:
+          type: integer
+          example: 8
+        memoryTotalBytes:
+          type: integer
+          example: 8321994752
+        dockerVersion:
+          type: string
+          example: 29.5.2
+        dockerApiVersion:
+          type: string
+          example: "1.54"
+        composeVersion:
+          type: string
+          example: ""
+        lastDockerStatus:
+          type: string
+          example: available
+        lastDockerMessage:
+          type: string
+          example: ok
+        lastImagesCount:
+          type: integer
+          example: 25
+        lastContainersCount:
+          type: integer
+          example: 11
+        checkedAt:
+          type: integer
+          example: 1779956193
+    DockerStatus:
+      type: object
+      properties:
+        dockerApiUrl:
+          type: string
+          example: http://127.0.0.1:2375
+        status:
+          type: string
+          example: available
+        message:
+          type: string
+          example: ok
+        imagesCount:
+          type: integer
+          example: 25
+        containersCount:
+          type: integer
+          example: 11
+        checkedAt:
+          type: integer
+          example: 1779956193
+    DockerImage:
+      type: object
+      properties:
+        id:
+          type: string
+          example: sha256:example
+        repoTags:
+          type: array
+          items:
+            type: string
+          example: ["crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0"]
+        repoDigests:
+          type: array
+          items:
+            type: string
+          example: []
+        created:
+          type: integer
+          example: 1779956193
+        size:
+          type: integer
+          example: 123456789
+        virtualSize:
+          type: integer
+          example: 123456789
+        sharedSize:
+          type: integer
+          example: -1
+        containers:
+          type: integer
+          example: -1
+    DockerContainer:
+      type: object
+      properties:
+        id:
+          type: string
+          example: abc123
+        names:
+          type: array
+          items:
+            type: string
+          example: ["/browser-001"]
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+        imageId:
+          type: string
+          example: sha256:example
+        command:
+          type: string
+          example: /start.sh
+        created:
+          type: integer
+          example: 1779956193
+        ports:
+          type: array
+          items:
+            $ref: '#/components/schemas/DockerContainerPort'
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        state:
+          type: string
+          example: running
+        status:
+          type: string
+          example: Up 10 minutes
+    DockerContainerPort:
+      type: object
+      properties:
+        ip:
+          type: string
+          example: 0.0.0.0
+        privatePort:
+          type: integer
+          example: 5900
+        publicPort:
+          type: integer
+          example: 5901
+        type:
+          type: string
+          example: tcp
+    PullImageRequest:
+      type: object
+      required: [image]
+      properties:
+        image:
+          type: string
+          description: 镜像名，支持 alpine:latest 或 registry.example.com/ns/app:tag。
+          example: alpine:latest
+        tag:
+          type: string
+          description: 可选 tag；如果 image 已经带 tag，可以不传。
+          example: latest
+    RemoveImageRequest:
+      type: object
+      required: [image]
+      properties:
+        image:
+          type: string
+          description: 镜像 ID、repo:tag 或 digest。
+          example: alpine:latest
+        force:
+          type: boolean
+          description: 是否强制删除。
+          example: false
+        noPrune:
+          type: boolean
+          description: 是否不清理未打标签的父层。
+          example: false
+    ContainerActionRequest:
+      type: object
+      properties:
+        timeoutSeconds:
+          type: integer
+          nullable: true
+          description: 停止或重启容器前等待的秒数；不传时默认 10 秒。
+          example: 10
+    ContainerActionResult:
+      type: object
+      properties:
+        containerId:
+          type: string
+          example: abc123
+        action:
+          type: string
+          enum: [start, stop, restart]
+          example: start
+        status:
+          type: string
+          enum: [success, not-modified]
+          example: success
+        message:
+          type: string
+          example: ok
+        checkedAt:
+          type: integer
+          example: 1779956193
+    CreateBrowserEnvRequest:
+      type: object
+      required: [userId, rpaType, name, runtime, environment, proxy]
+      properties:
+        userId:
+          type: string
+          description: 用户 ID，必须是数字字符串。
+          example: "318275706305908736"
+        rpaType:
+          type: string
+          enum: [tk, fb, ins, yt, x, other]
+          example: tk
+        name:
+          type: string
+          example: tk-browser-001
+        runtime:
+          $ref: '#/components/schemas/CreateBrowserEnvRuntime'
+        environment:
+          $ref: '#/components/schemas/CreateBrowserEnvEnvironment'
+        proxy:
+          $ref: '#/components/schemas/CreateBrowserEnvProxy'
+        fingerprint:
+          $ref: '#/components/schemas/CreateBrowserEnvFingerprint'
+        metadata:
+          $ref: '#/components/schemas/CreateBrowserEnvMetadata'
+    CreateBrowserEnvRuntime:
+      type: object
+      required: [image]
+      properties:
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+        startupUrl:
+          type: string
+          default: about:blank
+          example: about:blank
+        shmSize:
+          type: string
+          default: 1g
+          example: 1g
+    CreateBrowserEnvEnvironment:
+      type: object
+      required: [timezone, language, screen]
+      properties:
+        timezone:
+          type: string
+          example: America/Toronto
+        language:
+          type: string
+          example: en-US
+        screen:
+          $ref: '#/components/schemas/CreateBrowserEnvScreen'
+    CreateBrowserEnvScreen:
+      type: object
+      required: [width, height]
+      properties:
+        width:
+          type: integer
+          example: 1366
+        height:
+          type: integer
+          example: 768
+        depth:
+          type: integer
+          default: 24
+          example: 24
+    CreateBrowserEnvProxy:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        type:
+          type: string
+          enum: [clash-verge]
+          example: clash-verge
+        config:
+          type: string
+          description: Clash Verge YAML 原文；enabled=true 时必填。
+          example: "mode: rule\nmixed-port: 7897\n"
+    CreateBrowserEnvFingerprint:
+      type: object
+      properties:
+        backup:
+          nullable: true
+          description: 第一版可不传；后续可用于导入云端正式指纹备份。
+    CreateBrowserEnvMetadata:
+      type: object
+      properties:
+        description:
+          type: string
+          example: TikTok browser env
+    CreateBrowserEnvResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        userId:
+          type: string
+          example: "318275706305908736"
+        rpaType:
+          type: string
+          example: tk
+        envSequence:
+          type: integer
+          example: 1
+        ports:
+          $ref: '#/components/schemas/CreateBrowserEnvPorts'
+        envPath:
+          type: string
+          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+        files:
+          type: object
+          additionalProperties:
+            type: string
+        identityHash:
+          type: string
+          example: sha256:xxx
+        configHash:
+          type: string
+          example: sha256:xxx
+        createdAt:
+          type: integer
+          example: 1779956193
+    CreateBrowserEnvPorts:
+      type: object
+      properties:
+        cdp:
+          type: integer
+          example: 8101
+        vnc:
+          type: integer
+          example: 9101
+    RunBrowserEnvRequest:
+      type: object
+      properties:
+        forceRecreate:
+          type: boolean
+          description: 是否删除同名旧容器并按环境包重建；不会删除 browser-data/profile 登录态目录。
+          default: false
+          example: false
+    RunBrowserEnvResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        containerId:
+          type: string
+          example: abc123
+        containerName:
+          type: string
+          example: bv-318275706305908736-tk-918273645001
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+        status:
+          type: string
+          example: running
+        ports:
+          $ref: '#/components/schemas/CreateBrowserEnvPorts'
+        cdpUrl:
+          type: string
+          example: http://127.0.0.1:8101
+        vncUrl:
+          type: string
+          example: vnc://127.0.0.1:9101
+        dockerApiUrl:
+          type: string
+          example: http://127.0.0.1:2375
+        deviceArch:
+          type: string
+          example: arm64
+        startedAt:
+          type: integer
+          example: 1779956193
+        reused:
+          type: boolean
+          example: false
+    BrowserEnvVNCInfoResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        vncPort:
+          type: integer
+          example: 9101
+        vncUrl:
+          type: string
+          example: vnc://127.0.0.1:9101
+        wsUrl:
+          type: string
+          example: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
+        webVncUrl:
+          type: string
+          example: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+    BrowserEnvDetailResponse:
+      type: object
+      description: 环境包详情。代理配置正文和 fingerprint raw 不会在该响应中返回。
+      properties:
+        index:
+          $ref: '#/components/schemas/BrowserEnvIndex'
+        manifest:
+          type: object
+          description: manifest.json 的结构化内容。
+          additionalProperties: true
+        profile:
+          type: object
+          description: profile.json 的结构化内容，不包含代理配置正文。
+          additionalProperties: true
+        binding:
+          type: object
+          description: binding.json 的可展示摘要。
+          additionalProperties: true
+        container:
+          type: object
+          description: container.json 的结构化内容。
+          additionalProperties: true
+        proxy:
+          $ref: '#/components/schemas/BrowserEnvProxyDetail'
+        fingerprint:
+          $ref: '#/components/schemas/BrowserEnvFingerprintDetail'
+        consistency:
+          $ref: '#/components/schemas/BrowserEnvConsistencyCheck'
+        files:
+          type: object
+          additionalProperties:
+            type: string
+        vnc:
+          $ref: '#/components/schemas/BrowserEnvDetailVNCConnection'
+    BrowserEnvProxyDetail:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        type:
+          type: string
+          example: clash-verge
+        configPath:
+          type: string
+          example: proxy/clash.yaml
+        configHash:
+          type: string
+          example: sha256:xxx
+        configSizeBytes:
+          type: integer
+          example: 27
+        runtime:
+          type: object
+          additionalProperties: true
+    BrowserEnvFingerprintDetail:
+      type: object
+      properties:
+        snapshot:
+          type: object
+          additionalProperties: true
+        backup:
+          type: object
+          additionalProperties: true
+        runtimeConfig:
+          type: object
+          additionalProperties: true
+    BrowserEnvConsistencyCheck:
+      type: object
+      properties:
+        manifestMatchesIndex:
+          type: boolean
+          example: true
+        identityHashMatches:
+          type: boolean
+          example: true
+        proxyConfigExists:
+          type: boolean
+          example: true
+        browserDataExists:
+          type: boolean
+          example: true
+        errors:
+          type: array
+          items:
+            type: string
+          example: []
+    BrowserEnvDetailVNCConnection:
+      type: object
+      properties:
+        vncUrl:
+          type: string
+          example: vnc://127.0.0.1:9101
+        vncWsUrl:
+          type: string
+          example: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
+        webVncUrl:
+          type: string
+          example: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+    ListBrowserEnvResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 1
+        page:
+          type: integer
+          example: 1
+        pageSize:
+          type: integer
+          example: 20
+        byStatus:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            created: 1
+        byRpaType:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            tk: 1
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BrowserEnvIndex'
+    BrowserEnvIndex:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        userId:
+          type: string
+          example: "318275706305908736"
+        rpaType:
+          type: string
+          example: tk
+        name:
+          type: string
+          example: tk-browser-001
+        envSequence:
+          type: integer
+          example: 1
+        cdpPort:
+          type: integer
+          example: 8101
+        vncPort:
+          type: integer
+          example: 9101
+        vncUrl:
+          type: string
+          description: 仅 status=running 时返回的原生 VNC 地址。
+          example: vnc://127.0.0.1:9101
+        vncWsUrl:
+          type: string
+          description: 仅 status=running 时返回的 noVNC WebSocket 代理地址。
+          example: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
+        webVncUrl:
+          type: string
+          description: 仅 status=running 时返回的浏览器 VNC 页面地址。
+          example: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+        envPath:
+          type: string
+          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+        status:
+          type: string
+          enum: [created, running, stopped, deleted, archived, error]
+          example: created
+        containerId:
+          type: string
+          nullable: true
+          example: null
+        containerName:
+          type: string
+          nullable: true
+          example: bv-318275706305908736-tk-918273645001
+        containerStatus:
+          type: string
+          example: unknown
+        monitorStatus:
+          type: string
+          example: unknown
+        lastError:
+          type: string
+          nullable: true
+          example: null
+        fingerprintRestored:
+          type: boolean
+          example: false
+        hasBrowserData:
+          type: boolean
+          example: true
+        createdAt:
+          type: integer
+          example: 1779956193
+        updatedAt:
+          type: integer
+          example: 1779956193
+        deletedAt:
+          type: integer
+          nullable: true
+          example: null
+        lastStartedAt:
+          type: integer
+          nullable: true
+          example: null
+        lastStoppedAt:
+          type: integer
+          nullable: true
+          example: null
+        lastCheckedAt:
+          type: integer
+          nullable: true
+          example: null
+    DockerProgressInfo:
+      type: object
+      properties:
+        current:
+          type: integer
+          example: 1024
+        total:
+          type: integer
+          example: 2048
+    DockerPullEvent:
+      type: object
+      properties:
+        status:
+          type: string
+          example: Downloading
+        id:
+          type: string
+          example: latest
+        progress:
+          type: string
+          example: "[=====>     ]  1.2MB/2.4MB"
+        progressDetail:
+          $ref: '#/components/schemas/DockerProgressInfo'
+        error:
+          type: string
+          example: ""
+    DockerImageRemoveResult:
+      type: object
+      properties:
+        untagged:
+          type: string
+          example: alpine:latest
+        deleted:
+          type: string
+          example: sha256:example
+    DeviceInfoSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DeviceInfo'
+    DockerStatusSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DockerStatus'
+    DockerImagesSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/DockerImage'
+    DockerContainersSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/DockerContainer'
+    DockerPullEventsSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/DockerPullEvent'
+    DockerImageRemoveSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/DockerImageRemoveResult'
+    ContainerActionSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ContainerActionResult'
+    CreateBrowserEnvSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/CreateBrowserEnvResponse'
+    ListBrowserEnvSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ListBrowserEnvResponse'
+    BrowserEnvDetailSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BrowserEnvDetailResponse'
+    RunBrowserEnvSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/RunBrowserEnvResponse'
+    BrowserEnvVNCInfoSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BrowserEnvVNCInfoResponse'

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browser Env VNC</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: #111;
+        color: #f5f5f5;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .toolbar {
+        height: 44px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 14px;
+        background: #1d1d1f;
+        border-bottom: 1px solid #333;
+        box-sizing: border-box;
+      }
+
+      .title {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 14px;
+      }
+
+      .status {
+        font-size: 13px;
+        color: #f0c36a;
+      }
+
+      .status.ok {
+        color: #6ee7a8;
+      }
+
+      button {
+        height: 30px;
+        border: 1px solid #555;
+        border-radius: 6px;
+        background: #2d2d30;
+        color: #fff;
+        cursor: pointer;
+      }
+
+      #viewer {
+        width: 100%;
+        height: calc(100vh - 44px);
+        overflow: hidden;
+        background: #000;
+      }
+
+      #viewer > div {
+        margin: 0 auto;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="title" id="title">VNC</div>
+      <div class="status" id="status">等待连接</div>
+      <button id="paste" type="button">粘贴</button>
+      <button id="reconnect" type="button">重连</button>
+    </header>
+    <main id="viewer"></main>
+
+    <script type="module">
+      import RFB from "/vendor/novnc/core/rfb.js";
+
+      const params = new URLSearchParams(window.location.search);
+      const envId = (params.get("envId") || "").trim();
+      const viewer = document.getElementById("viewer");
+      const title = document.getElementById("title");
+      const status = document.getElementById("status");
+      const paste = document.getElementById("paste");
+      const reconnect = document.getElementById("reconnect");
+      const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+      let rfb = null;
+
+      function setStatus(text, ok = false) {
+        status.textContent = text;
+        status.classList.toggle("ok", ok);
+      }
+
+      function connect() {
+        if (!envId) {
+          setStatus("缺少 envId");
+          return;
+        }
+        if (rfb) {
+          rfb.disconnect();
+          rfb = null;
+        }
+        viewer.innerHTML = "";
+        title.textContent = envId;
+        setStatus("连接中");
+
+        const wsUrl = `${wsProtocol}://${window.location.host}/api/v1/edge/browser-envs/${encodeURIComponent(envId)}/vnc/ws`;
+        const current = new RFB(viewer, wsUrl);
+        rfb = current;
+        current.scaleViewport = true;
+        current.clipViewport = false;
+        current.resizeSession = false;
+        current.background = "#000";
+        current.showDotCursor = true;
+
+        current.addEventListener("connect", () => {
+          if (rfb !== current) return;
+          setStatus("已连接", true);
+          current.focus({ preventScroll: true });
+        });
+
+        current.addEventListener("disconnect", (event) => {
+          if (rfb !== current) return;
+          setStatus(event.detail?.clean ? "已断开" : "连接失败");
+        });
+
+        current.addEventListener("credentialsrequired", () => {
+          setStatus("VNC 请求密码，当前容器应为免密，请检查 x11vnc 参数");
+        });
+
+        current.addEventListener("securityfailure", () => {
+          setStatus("VNC 安全握手失败");
+        });
+      }
+
+      async function pasteClipboard() {
+        if (!rfb) {
+          setStatus("未连接");
+          return;
+        }
+        if (!navigator.clipboard?.readText) {
+          setStatus("浏览器不支持读取剪贴板");
+          return;
+        }
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            rfb.clipboardPasteFrom(text);
+            setStatus("已发送剪贴板", true);
+          }
+        } catch (error) {
+          setStatus(`读取剪贴板失败: ${error?.message || "未知错误"}`);
+        }
+      }
+
+      paste.addEventListener("click", pasteClipboard);
+      reconnect.addEventListener("click", connect);
+      connect();
+    </script>
+  </body>
+</html>
