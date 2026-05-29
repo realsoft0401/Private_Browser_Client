@@ -37,6 +37,24 @@ type RuntimeModelHandler struct {
 	repo *repository.Repository
 }
 
+// ConfigModelHandler 是环境包配置修改动作的 Dao 入口。
+//
+// proxy/runtime/environment 这类修改最终会写文件，但 SQLite 索引仍需要同步状态和更新时间；
+// 单独建 Handler 是为了避免把配置写入动作继续塞进 RuntimeModelHandler，保持调用语义清楚。
+type ConfigModelHandler struct {
+	repo *repository.Repository
+}
+
+// StatusSyncModelHandler 是后台状态同步任务的 Dao 入口。
+//
+// 设计来源：
+// - 用户要求框架里有定时任务自动刷新容器状态；
+// - 同步任务既需要读待扫描环境包，也需要写运行态摘要；
+// - 单独建 Handler 可以让调用处明确这是“后台状态同步”，不和 HTTP 列表查询或用户主动 run/stop 混在一起。
+type StatusSyncModelHandler struct {
+	repo *repository.Repository
+}
+
 // NewCreateModelHandler 创建环境包索引 Dao。
 //
 // 当前不在这里做事务编排；如果后续创建环境包需要同时写多张索引表，
@@ -60,6 +78,20 @@ func NewListModelHandler() *ListModelHandler {
 // NewRuntimeModelHandler 创建环境包运行态 Dao。
 func NewRuntimeModelHandler() *RuntimeModelHandler {
 	return &RuntimeModelHandler{
+		repo: repository.NewRepository(),
+	}
+}
+
+// NewConfigModelHandler 创建环境包配置修改 Dao。
+func NewConfigModelHandler() *ConfigModelHandler {
+	return &ConfigModelHandler{
+		repo: repository.NewRepository(),
+	}
+}
+
+// NewStatusSyncModelHandler 创建后台状态同步 Dao。
+func NewStatusSyncModelHandler() *StatusSyncModelHandler {
+	return &StatusSyncModelHandler{
 		repo: repository.NewRepository(),
 	}
 }
@@ -128,6 +160,37 @@ func (h *RuntimeModelHandler) GetBrowserEnvIndexByID(ctx context.Context, envID 
 //
 // 这里只转交 Repository，不写 SQL；中文业务错误仍由 Service 层决定。
 func (h *RuntimeModelHandler) UpdateBrowserEnvRuntime(ctx context.Context, update *model.BrowserEnvRuntimeUpdate) error {
+	if h == nil || h.repo == nil {
+		return errors.New("browser env dao 未初始化")
+	}
+	return h.repo.UpdateBrowserEnvRuntime(ctx, update)
+}
+
+// UpdateBrowserEnvConfig 同步配置修改后的 browser_envs 索引状态。
+//
+// Dao 只保留“配置更新”这个业务动作名，不直接拼 SQL；
+// 具体字段更新和 RowsAffected 判断交给 Repository。
+func (h *ConfigModelHandler) UpdateBrowserEnvConfig(ctx context.Context, update *model.BrowserEnvConfigUpdate) error {
+	if h == nil || h.repo == nil {
+		return errors.New("browser env dao 未初始化")
+	}
+	return h.repo.UpdateBrowserEnvConfig(ctx, update)
+}
+
+// ListStatusSyncTargets 查询后台状态同步任务需要扫描的环境包。
+//
+// Dao 只保留业务动作名；不判断 Docker 状态、不读取文件，具体扫描逻辑由 Service 层负责。
+func (h *StatusSyncModelHandler) ListStatusSyncTargets(ctx context.Context) ([]*model.BrowserEnvIndex, error) {
+	if h == nil || h.repo == nil {
+		return nil, errors.New("browser env dao 未初始化")
+	}
+	return h.repo.ListBrowserEnvStatusSyncTargets(ctx)
+}
+
+// UpdateBrowserEnvRuntime 更新后台同步得到的运行态摘要。
+//
+// 这里复用 Repository 的运行态更新能力，保证 run/stop/status sync 对 browser_envs 的写入字段一致。
+func (h *StatusSyncModelHandler) UpdateBrowserEnvRuntime(ctx context.Context, update *model.BrowserEnvRuntimeUpdate) error {
 	if h == nil || h.repo == nil {
 		return errors.New("browser env dao 未初始化")
 	}

@@ -33,6 +33,7 @@ func Setup() *gin.Engine {
 			"version":    Settings.Conf.Version,
 			"configFile": Settings.Conf.ConfigFile,
 			"dockerApi":  Settings.Conf.DockerConfig.APIURL,
+			"statusSync": BrowserEnvService.StatusSyncSnapshot(),
 		})
 	})
 	registerSwaggerDocs(r)
@@ -56,6 +57,8 @@ func Setup() *gin.Engine {
 	edge.POST("/browser-envs", BrowserEnvService.CreateBrowserEnv)
 	edge.GET("/browser-envs/:envId", BrowserEnvService.GetBrowserEnvDetail)
 	edge.POST("/browser-envs/:envId/run", BrowserEnvService.RunBrowserEnv)
+	edge.POST("/browser-envs/:envId/stop", BrowserEnvService.StopBrowserEnv)
+	edge.PATCH("/browser-envs/:envId/proxy", BrowserEnvService.UpdateBrowserEnvProxy)
 	edge.GET("/browser-envs/:envId/vnc-info", BrowserEnvService.GetBrowserEnvVNCInfo)
 	edge.GET("/browser-envs/:envId/vnc/ws", BrowserEnvService.ProxyBrowserEnvVNC)
 

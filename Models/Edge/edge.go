@@ -69,21 +69,26 @@ type DockerImage struct {
 	Containers  int64    `json:"containers"`
 }
 
-// DockerContainer 是边缘服务返回给前端或中心端的本机容器摘要。
+// DockerContainer 是边缘服务返回给前端或中心端的项目相关容器摘要。
 //
 // 这个模型来自 Docker Engine API `/containers/json?all=true`。
-// 当前只承载容器列表页、排障和后续启停操作需要的字段，不保存数据库。
+// 当前接口只暴露 Private_Browser_Client 相关容器，不再把本机 Docker 的无关业务容器混进来。
+// projectRole 用于区分边缘服务自身容器和浏览器环境容器，方便前端按类型展示和操作。
 type DockerContainer struct {
-	ID      string                `json:"id"`
-	Names   []string              `json:"names"`
-	Image   string                `json:"image"`
-	ImageID string                `json:"imageId"`
-	Command string                `json:"command"`
-	Created int64                 `json:"created"`
-	Ports   []DockerContainerPort `json:"ports"`
-	Labels  map[string]string     `json:"labels"`
-	State   string                `json:"state"`
-	Status  string                `json:"status"`
+	ID          string                `json:"id"`
+	Names       []string              `json:"names"`
+	Image       string                `json:"image"`
+	ImageID     string                `json:"imageId"`
+	Command     string                `json:"command"`
+	Created     int64                 `json:"created"`
+	Ports       []DockerContainerPort `json:"ports"`
+	Labels      map[string]string     `json:"labels"`
+	State       string                `json:"state"`
+	Status      string                `json:"status"`
+	ProjectRole string                `json:"projectRole"`
+	EnvID       string                `json:"envId,omitempty"`
+	UserID      string                `json:"userId,omitempty"`
+	RPAType     string                `json:"rpaType,omitempty"`
 }
 
 // DockerContainerPort 表示容器端口映射摘要。
@@ -164,6 +169,13 @@ type DockerContainerHostConfig struct {
 	ShmSize       int64                          `json:"ShmSize,omitempty"`
 	CapAdd        []string                       `json:"CapAdd,omitempty"`
 	Devices       []DockerContainerDeviceMapping `json:"Devices,omitempty"`
+	// SecurityOpt 保存 Docker 安全配置。
+	//
+	// 设计来源：
+	// - Private_Browser_Control 旧 compose 容器使用 seccomp:unconfined；
+	// - Chromium 在 Docker Desktop / 部分 Linux 节点中如果没有可用 sandbox，会直接退出并触发容器反复重启；
+	// - Go run 生成 Docker create 参数时必须保留这个历史约束，不能只看镜像和端口。
+	SecurityOpt []string `json:"SecurityOpt,omitempty"`
 }
 
 // DockerContainerRestartPolicy 描述容器重启策略。

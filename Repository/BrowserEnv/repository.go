@@ -200,6 +200,42 @@ func (r *Repository) UpdateBrowserEnvRuntime(ctx context.Context, update *model.
 	return nil
 }
 
+// UpdateBrowserEnvConfig 更新配置修改后 browser_envs 需要同步的轻量字段。
+//
+// 职责边界：
+// - 只更新 status / last_error / updated_at 这类列表展示字段；
+// - 不写 profile/proxy/binding 文件，不计算 identityHash；
+// - 不修改 container_id、端口和运行时间，避免配置修改污染运行态事实。
+func (r *Repository) UpdateBrowserEnvConfig(ctx context.Context, update *model.BrowserEnvConfigUpdate) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("sqlite 未初始化")
+	}
+	if update == nil {
+		return fmt.Errorf("config update 不能为空")
+	}
+	result, err := r.db.ExecContext(ctx, `UPDATE browser_envs SET
+		status = ?,
+		last_error = ?,
+		updated_at = ?
+		WHERE env_id = ?`,
+		update.Status,
+		update.LastError,
+		update.UpdatedAt,
+		update.EnvID,
+	)
+	if err != nil {
+		return fmt.Errorf("update browser_envs config failed: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read browser_envs config rows affected failed: %w", err)
+	}
+	if affected == 0 {
+		return ErrBrowserEnvNotFound
+	}
+	return nil
+}
+
 // ListBrowserEnvIndexes 分页查询本机环境包索引列表。
 //
 // 职责边界：
@@ -255,6 +291,64 @@ func (r *Repository) ListBrowserEnvIndexes(ctx context.Context, query model.List
 	}
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate browser_envs failed: %w", err)
+	}
+	return items, nil
+}
+
+// ListBrowserEnvStatusSyncTargets 查询后台状态同步任务需要扫描的环境包。
+//
+// 设计来源：
+// - 状态同步任务要定期修正 SQLite 中的运行态，但不应处理已假删除或归档的环境包；
+// - 这里不复用分页列表接口，是为了避免同步任务受 page/pageSize 影响漏扫；
+// - Repository 只负责 SQL 过滤和扫描，不访问 Docker、不读取环境包文件。
+func (r *Repository) ListBrowserEnvStatusSyncTargets(ctx context.Context) ([]*model.BrowserEnvIndex, error) {
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("sqlite 未初始化")
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT
+		env_id,
+		user_id,
+		rpa_type,
+		name,
+		env_sequence,
+		cdp_port,
+		vnc_port,
+		env_path,
+		status,
+		container_id,
+		container_name,
+		container_status,
+		monitor_status,
+		last_error,
+		fingerprint_restored,
+		has_browser_data,
+		created_at,
+		updated_at,
+		deleted_at,
+		last_started_at,
+		last_stopped_at,
+		last_checked_at
+		FROM browser_envs
+		WHERE status != ? AND status != ?
+		ORDER BY env_sequence ASC`,
+		model.BrowserEnvStatusDeleted,
+		model.BrowserEnvStatusArchived,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query browser_envs status sync targets failed: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]*model.BrowserEnvIndex, 0)
+	for rows.Next() {
+		item, scanErr := scanBrowserEnvIndex(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate browser_envs status sync targets failed: %w", err)
 	}
 	return items, nil
 }

@@ -156,6 +156,8 @@ func buildContainerFile(ctx *createContext) model.ContainerFile {
 			APIURL: Settings.Conf.DockerConfig.APIURL,
 		},
 		Labels: map[string]string{
+			"bv.project":       "private-browser-client",
+			"bv.role":          "browser-env",
 			"bv.envId":         ctx.EnvID,
 			"bv.userId":        ctx.Param.UserID,
 			"bv.rpaType":       ctx.Param.RPAType,

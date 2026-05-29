@@ -27,11 +27,12 @@ type AppConfig struct {
 	Version string `mapstructure:"version"`
 	// ProjectRoot / ConfigFile / Env 是运行期补进去的元信息，不从 yaml 直接反序列化。
 	// 它们主要服务于排障和健康检查，避免服务起来后还不知道自己到底读了哪份配置。
-	ProjectRoot   string `mapstructure:"-"`
-	ConfigFile    string `mapstructure:"-"`
-	Env           string `mapstructure:"-"`
-	*ServerConfig `mapstructure:"server"`
-	*DockerConfig `mapstructure:"docker"`
+	ProjectRoot       string `mapstructure:"-"`
+	ConfigFile        string `mapstructure:"-"`
+	Env               string `mapstructure:"-"`
+	*ServerConfig     `mapstructure:"server"`
+	*DockerConfig     `mapstructure:"docker"`
+	*StatusSyncConfig `mapstructure:"status_sync"`
 }
 
 // ServerConfig 描述当前 Go 边缘服务自身的监听参数。
@@ -51,6 +52,24 @@ type ServerConfig struct {
 // - 默认使用 Docker Engine HTTP 2375，后续如果改成本地 socket 或 TLS 2376，应只扩展这一配置和 Edge Service。
 type DockerConfig struct {
 	APIURL string `mapstructure:"api_url"`
+}
+
+// StatusSyncConfig 描述浏览器环境运行态后台同步任务。
+//
+// 设计来源：
+// - 用户明确要求边缘服务每隔几秒获取一次容器状态并刷新数据库；
+// - 用户进一步要求定时任务必须有哨兵机制，任务挂掉后要自动拉起来；
+// - 这些值放进配置层，是为了后续在开发、部署和排障时能调整频率，而不是把时间常量散落在任务代码里。
+//
+// 职责边界：
+// - 这里只描述任务节奏，不描述具体同步业务；
+// - Worker 只同步状态，不启动/停止/删除浏览器容器；
+// - Watchdog 只守护同步任务本身，不守护 Docker 容器。
+type StatusSyncConfig struct {
+	Enabled         bool `mapstructure:"enabled"`
+	IntervalSeconds int  `mapstructure:"interval_seconds"`
+	WatchdogSeconds int  `mapstructure:"watchdog_seconds"`
+	StaleSeconds    int  `mapstructure:"stale_seconds"`
 }
 
 // Init 负责加载当前运行环境的配置文件。
@@ -74,6 +93,10 @@ func Init(projectRoot string) error {
 	configEngine.SetDefault("server.read_timeout_seconds", 15)
 	configEngine.SetDefault("server.write_timeout_seconds", 15)
 	configEngine.SetDefault("docker.api_url", "http://127.0.0.1:2375")
+	configEngine.SetDefault("status_sync.enabled", true)
+	configEngine.SetDefault("status_sync.interval_seconds", 5)
+	configEngine.SetDefault("status_sync.watchdog_seconds", 15)
+	configEngine.SetDefault("status_sync.stale_seconds", 30)
 
 	if err := configEngine.ReadInConfig(); err != nil {
 		return fmt.Errorf("read config failed: %w", err)
@@ -91,6 +114,10 @@ func Init(projectRoot string) error {
 	if Conf.DockerConfig == nil {
 		Conf.DockerConfig = &DockerConfig{}
 	}
+	if Conf.StatusSyncConfig == nil {
+		Conf.StatusSyncConfig = &StatusSyncConfig{}
+	}
+	normalizeStatusSyncConfig(Conf.StatusSyncConfig)
 
 	configEngine.WatchConfig()
 	// 这里保留热加载，是因为配置文件在本地开发和部署阶段都可能被手动修改。
@@ -110,11 +137,44 @@ func Init(projectRoot string) error {
 		if updated.DockerConfig == nil {
 			updated.DockerConfig = &DockerConfig{}
 		}
+		if updated.StatusSyncConfig == nil {
+			updated.StatusSyncConfig = &StatusSyncConfig{}
+		}
+		normalizeStatusSyncConfig(updated.StatusSyncConfig)
 		Conf = updated
 		fmt.Printf("config reloaded: %s\n", event.Name)
 	})
 
 	return nil
+}
+
+// normalizeStatusSyncConfig 收敛后台同步任务的时间配置。
+//
+// 这里给出保守下限，是为了避免配置误写成 0 或 1 秒后疯狂请求 Docker API；
+// 同时保证 staleSeconds 大于 watchdogSeconds，否则哨兵会过于频繁地误判 Worker 卡死。
+func normalizeStatusSyncConfig(config *StatusSyncConfig) {
+	if config == nil {
+		return
+	}
+	if config.IntervalSeconds <= 0 {
+		config.IntervalSeconds = 5
+	}
+	if config.IntervalSeconds < 3 {
+		config.IntervalSeconds = 3
+	}
+	if config.WatchdogSeconds <= 0 {
+		config.WatchdogSeconds = 15
+	}
+	if config.WatchdogSeconds < 5 {
+		config.WatchdogSeconds = 5
+	}
+	if config.StaleSeconds <= 0 {
+		config.StaleSeconds = 30
+	}
+	minStale := config.WatchdogSeconds * 2
+	if config.StaleSeconds < minStale {
+		config.StaleSeconds = minStale
+	}
 }
 
 // resolveEnv 统一决定当前运行环境。

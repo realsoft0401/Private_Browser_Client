@@ -94,14 +94,21 @@ type CreateScreenRequest struct {
 	Depth  int `json:"depth"`
 }
 
-// CreateProxyRequest 描述环境包代理配置。
+// CreateProxyRequest 描述创建环境包时的代理配置。
 //
-// proxy.config 会单独写入 proxy/clash.yaml，profile 里只保存 configPath，
-// 避免大段 YAML 混入 profile 导致后续 diff、迁移和 hash 处理变复杂。
+// 设计来源：
+// - 用户测试发现长 YAML 直接作为 JSON 字符串传输时容易被工具截断或转义错；
+// - 当前项目是新开发，不需要兼容旧的明文 config 入参；
+// - 因此创建环境包和后续 PATCH 代理配置统一使用 configBase64。
+//
+// 职责边界：
+// - ConfigBase64 是 API 入参，表示代理 YAML 原文的 Base64；
+// - Config 是 Service 解码后的内部值，只用于写入 proxy/clash.yaml，不参与 JSON 协议。
 type CreateProxyRequest struct {
-	Enabled *bool  `json:"enabled"`
-	Type    string `json:"type"`
-	Config  string `json:"config"`
+	Enabled      *bool  `json:"enabled"`
+	Type         string `json:"type"`
+	ConfigBase64 string `json:"configBase64"`
+	Config       string `json:"-"`
 }
 
 // CreateFingerprintRequest 预留创建时导入正式指纹备份的入口。
@@ -195,6 +202,31 @@ type RunBrowserEnvResponse struct {
 	Reused        bool            `json:"reused"`
 }
 
+// StopBrowserEnvRequest 是停止环境包对应容器的请求体。
+//
+// 设计来源：
+// - stop(envId) 是浏览器环境生命周期的正规入口，前端不应该直接记住 Docker containerId 再调 Edge 容器接口；
+// - 当前只允许传 timeoutSeconds，原因是 Docker stop 需要一个浏览器写盘缓冲时间；
+// - 不允许透传 force、signal 等危险参数，避免误伤 browser-data/profile 中的登录态文件。
+type StopBrowserEnvRequest struct {
+	TimeoutSeconds *int `json:"timeoutSeconds"`
+}
+
+// StopBrowserEnvResponse 是停止环境包后的运行态摘要。
+//
+// 这些字段用于让中心服务端或前端确认“本次 stop 已经收口到环境包状态”，
+// actionStatus 保留 Docker 304 的 not-modified 语义，用来表达容器原本已经停止。
+type StopBrowserEnvResponse struct {
+	EnvID           string  `json:"envId"`
+	ContainerID     *string `json:"containerId,omitempty"`
+	ContainerName   *string `json:"containerName,omitempty"`
+	Status          string  `json:"status"`
+	ContainerStatus string  `json:"containerStatus"`
+	ActionStatus    string  `json:"actionStatus"`
+	Message         string  `json:"message"`
+	StoppedAt       int64   `json:"stoppedAt"`
+}
+
 // BrowserEnvVNCInfoResponse 是浏览器版 VNC 连接信息。
 //
 // 设计来源：
@@ -207,6 +239,68 @@ type BrowserEnvVNCInfoResponse struct {
 	VNCURL    string `json:"vncUrl"`
 	WSURL     string `json:"wsUrl"`
 	WebVNCURL string `json:"webVncUrl"`
+}
+
+// UpdateBrowserEnvProxyRequest 是修改环境包代理配置的请求体。
+//
+// 设计来源：
+// - 用户明确要求“只要改的东西，就需要重新启动容器”；
+// - 代理配置会进入 run 阶段的容器环境变量，并参与 identityHash；
+// - 因此这里使用 PATCH 语义允许局部字段，但只要实际值变化，就必须返回 restartRequired=true。
+type UpdateBrowserEnvProxyRequest struct {
+	Enabled *bool   `json:"enabled"`
+	Type    *string `json:"type"`
+	// ConfigBase64 是代理 YAML 原文的 Base64 编码。
+	//
+	// 设计来源：
+	// - 用户实测长 YAML 通过 JSON 字符串传输时容易被 Apifox/前端截断或转义出错；
+	// - 旧容器启动链路本来就使用 CLASH_VERGE_CONFIG_BASE64 传入代理配置；
+	// - 因此修改接口也改为优先接收 configBase64，后端解码后再写入 proxy/clash.yaml。
+	ConfigBase64 *string `json:"configBase64"`
+}
+
+// UpdateBrowserEnvProxyResponse 是代理配置修改后的摘要。
+//
+// 响应不返回代理正文，只返回 hash、大小和 binding 版本，避免接口把代理敏感内容反吐给前端。
+type UpdateBrowserEnvProxyResponse struct {
+	EnvID           string                `json:"envId"`
+	Status          string                `json:"status"`
+	Proxy           BrowserEnvProxyDetail `json:"proxy"`
+	BindingVersion  int                   `json:"bindingVersion"`
+	IdentityHash    string                `json:"identityHash"`
+	Changed         bool                  `json:"changed"`
+	RestartRequired bool                  `json:"restartRequired"`
+	// Restarted 表示本次修改已由边缘服务自动完成容器重建。
+	//
+	// 用户明确要求配置修改后的启动过程对使用者无感知；
+	// 因此 running 状态下发生真实配置变化时，接口会自动 forceRecreate 并把结果写到 Run。
+	Restarted bool                   `json:"restarted"`
+	Run       *RunBrowserEnvResponse `json:"run,omitempty"`
+	UpdatedAt int64                  `json:"updatedAt"`
+}
+
+// StatusSyncSnapshot 是后台状态同步任务的健康快照。
+//
+// 设计来源：
+// - 用户要求定时任务必须有哨兵机制，挂掉后自动拉起；
+// - 任务是否健康不能只留在日志里，/health 和后续调试接口需要能看到 Worker/Watchdog 的状态；
+// - 这里只暴露任务元信息和最近一轮统计，不暴露任何代理配置、指纹或登录态数据。
+type StatusSyncSnapshot struct {
+	Enabled           bool    `json:"enabled"`
+	WorkerRunning     bool    `json:"workerRunning"`
+	Restarts          int64   `json:"restarts"`
+	IntervalSeconds   int     `json:"intervalSeconds"`
+	WatchdogSeconds   int     `json:"watchdogSeconds"`
+	StaleSeconds      int     `json:"staleSeconds"`
+	LastStartedAt     *int64  `json:"lastStartedAt,omitempty"`
+	LastHeartbeatAt   *int64  `json:"lastHeartbeatAt,omitempty"`
+	LastFinishedAt    *int64  `json:"lastFinishedAt,omitempty"`
+	LastSuccessAt     *int64  `json:"lastSuccessAt,omitempty"`
+	LastError         *string `json:"lastError,omitempty"`
+	LastPanic         *string `json:"lastPanic,omitempty"`
+	LastSkippedReason *string `json:"lastSkippedReason,omitempty"`
+	LastScannedCount  int     `json:"lastScannedCount"`
+	LastUpdatedCount  int     `json:"lastUpdatedCount"`
 }
 
 // BrowserEnvDetailResponse 是环境包详情接口响应。
@@ -337,6 +431,19 @@ type BrowserEnvRuntimeUpdate struct {
 	LastStartedAt   *int64
 	LastStoppedAt   *int64
 	LastCheckedAt   *int64
+}
+
+// BrowserEnvConfigUpdate 是配置修改后同步 browser_envs 索引的最小模型。
+//
+// 设计来源：
+// - proxy/runtime 等配置事实保存在环境包文件里，SQLite 只需要同步 updated_at 和可展示状态；
+// - 不能为了配置修改把 Service 直接伸手操作 Rom.Db/SQLite；
+// - 因此单独建配置更新模型，继续保持 Service -> Dao -> Repository 的调用边界。
+type BrowserEnvConfigUpdate struct {
+	EnvID     string
+	Status    string
+	LastError *string
+	UpdatedAt int64
 }
 
 // BrowserEnvIndex 是 browser_envs 表的索引型元数据模型。

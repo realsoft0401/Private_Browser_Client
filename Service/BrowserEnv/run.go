@@ -60,6 +60,21 @@ func (s *Service) RunBrowserEnv(envID string, param *model.RunBrowserEnvRequest)
 	runEnvMu.Lock()
 	defer runEnvMu.Unlock()
 
+	return runBrowserEnvLocked(envID, param)
+}
+
+// runBrowserEnvLocked 执行已经持有生命周期锁的启动流程。
+//
+// 设计来源：
+// - 普通 run 接口和配置修改后的无感重建都需要同一套 Docker create/start 逻辑；
+// - 配置修改接口已经持有 runEnvMu，如果再调用 RunBrowserEnv 会死锁；
+// - 因此把真正的启动流程拆成 locked helper，外层负责加锁，内部只做环境包到容器的编排。
+//
+// 维护约束：
+// - 这个函数调用前必须已经持有 runEnvMu；
+// - 不要从 HTTP 层直接调用它；
+// - 它仍然保持 run 的边界：不拉镜像、不选择架构、不删除 browser-data/profile。
+func runBrowserEnvLocked(envID string, param *model.RunBrowserEnvRequest) (*model.RunBrowserEnvResponse, error) {
 	handler := browserEnvDao.NewRuntimeModelHandler()
 	index, err := handler.GetBrowserEnvIndexByID(context.Background(), envID)
 	if err != nil {
@@ -282,6 +297,12 @@ func buildDockerCreateConfig(pkg *runPackage) (*edgeModel.DockerContainerCreateC
 			Name: "unless-stopped",
 		},
 		ShmSize: shmSize,
+		// Chromium 容器需要沿用旧 compose 的 seccomp:unconfined。
+		//
+		// 背景：用户在测试 1.1 镜像时发现容器反复 restarting；日志显示 Chromium
+		// `No usable sandbox`。旧 Private_Browser_Control 容器通过 seccomp:unconfined
+		// 让 Chromium sandbox 能正常工作，因此 Go 版 run 不能遗漏这个 HostConfig。
+		SecurityOpt: []string{"seccomp:unconfined"},
 	}
 	if isTunEnabled(pkg.ProxyConfig) {
 		hostConfig.CapAdd = []string{"NET_ADMIN"}

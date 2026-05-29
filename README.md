@@ -74,6 +74,7 @@ main.go
   └→ Infrastructures.Init(root)
        ├→ Settings.Init(root)         // 加载 config-{env}.yaml
        ├→ SQLite.Init()               // 打开 data/private_browser_client-{env}.db 并建 browser_envs
+       ├→ StartStatusSyncManager()    // 启动带哨兵的环境包状态同步任务
        ├→ releaseOccupiedPort(port)   // 开发期清理占用端口的旧进程
        ├→ Routes.Setup()              // 注册边缘服务路由
        ├→ http.Server.ListenAndServe  // 启动服务
@@ -98,7 +99,7 @@ main.go
 | GET | `/api/v1/edge/device-info` | 通过本机 Docker 2375 获取设备能力、Docker 版本、镜像数、容器数 |
 | GET | `/api/v1/edge/docker/status` | 获取本机 Docker 可用性、镜像数量、容器数量 |
 | GET | `/api/v1/edge/docker/images` | 获取本机 Docker 镜像列表 |
-| GET | `/api/v1/edge/docker/containers` | 获取本机 Docker 容器列表，包含运行中和已停止容器 |
+| GET | `/api/v1/edge/docker/containers` | 获取本项目相关 Docker 容器，只返回边缘服务容器和浏览器环境容器 |
 | POST | `/api/v1/edge/docker/pull-image` | 拉取本机 Docker 镜像 |
 | POST | `/api/v1/edge/docker/remove-image` | 删除本机 Docker 镜像 |
 | POST | `/api/v1/edge/containers/:id/start` | 启动本机 Docker 容器 |
@@ -108,6 +109,8 @@ main.go
 | POST | `/api/v1/edge/browser-envs` | 创建本地浏览器环境包文件，不启动 Docker |
 | GET | `/api/v1/edge/browser-envs/:envId` | 查询单个环境包详情，不返回代理明文和指纹 raw |
 | POST | `/api/v1/edge/browser-envs/:envId/run` | 按环境包创建或启动本机浏览器容器 |
+| POST | `/api/v1/edge/browser-envs/:envId/stop` | 按环境包停止本机浏览器容器，并同步运行态 |
+| PATCH | `/api/v1/edge/browser-envs/:envId/proxy` | 修改环境包代理配置，变更后需要重新启动容器 |
 | GET | `/api/v1/edge/browser-envs/:envId/vnc-info` | 获取浏览器版 VNC 连接信息 |
 | GET | `/api/v1/edge/browser-envs/:envId/vnc/ws` | noVNC WebSocket 到 VNC TCP 的代理通道 |
 | GET | `/web-vnc.html?envId=...` | 独立浏览器 VNC 页面 |
@@ -117,9 +120,16 @@ main.go
 ```yaml
 docker:
   api_url: http://127.0.0.1:2375
+status_sync:
+  enabled: true
+  interval_seconds: 5
+  watchdog_seconds: 15
+  stale_seconds: 30
 ```
 
 `docker.api_url` 是边缘服务访问本机 Docker Engine 的地址。当前默认使用 Docker HTTP 2375。
+
+`status_sync` 是浏览器环境包后台状态同步任务：Worker 每隔几秒按 Docker 真实容器状态刷新 `browser_envs`，Watchdog 监控 Worker 心跳，异常退出或长时间无心跳时自动拉起。它只同步状态，不自动启动、删除或修改浏览器容器，也不会删除 `browser-data/profile` 登录态目录。
 
 ## 响应格式
 
@@ -244,6 +254,40 @@ curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/run \
 `run` 接口只接受 envId 和 `forceRecreate`，镜像、端口、代理、指纹和浏览器数据挂载都从环境包文件读取。
 如果镜像未提前拉取，会返回明确错误，调用方应先执行 `/api/v1/edge/docker/pull-image`。
 
+停止浏览器环境包示例：
+
+```bash
+curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/stop \
+  -H 'Content-Type: application/json' \
+  -d '{"timeoutSeconds":10}'
+```
+
+`stop` 接口围绕 envId 停止容器，并回写 `container.json`、`manifest.lastRuntime` 和 SQLite `browser_envs` 运行态。
+它不会删除容器、镜像或 `browser-data/profile` 登录态目录。
+
+修改代理配置示例：
+
+```bash
+curl -X PATCH http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/proxy \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "enabled": true,
+    "type": "clash-verge",
+    "configBase64": "bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg=="
+  }'
+```
+
+`configBase64` 是代理 YAML 原文的 Base64 编码，例如：
+
+```bash
+base64 -i clash.yaml | tr -d '\n'
+```
+
+代理配置不是热更新。只要配置实际发生变化，就必须通过重建容器让配置生效。
+如果环境包正在 `running`，接口会自动 `forceRecreate` 重建容器，并返回 `restarted=true`，前端不需要再单独调用 `stop/run`。
+如果环境包不是运行态，响应会返回 `restartRequired=true`，表示下一次 `run` 时生效。
+该接口会重算 `binding.identityHash` 并递增 `binding.version`，但不会删除 `browser-data/profile`。
+
 浏览器 VNC 示例：
 
 ```bash
@@ -297,6 +341,8 @@ Mac / Docker Desktop 运行示例：
 ```bash
 docker run --rm \
   --name private-browser-client \
+  --label bv.project=private-browser-client \
+  --label bv.role=edge-service \
   -p 3300:3300 \
   -v "$(pwd)/data:/app/data" \
   private-browser-client:dev
@@ -307,6 +353,8 @@ docker run --rm \
 ```bash
 docker run -d \
   --name private-browser-client \
+  --label bv.project=private-browser-client \
+  --label bv.role=edge-service \
   --restart unless-stopped \
   -p 3300:3300 \
   -v "$(pwd)/data:/app/data" \
@@ -324,6 +372,8 @@ Linux 完整示例：
 ```bash
 docker run -d \
   --name private-browser-client \
+  --label bv.project=private-browser-client \
+  --label bv.role=edge-service \
   --restart unless-stopped \
   -p 3300:3300 \
   -v "$(pwd)/data:/app/data" \

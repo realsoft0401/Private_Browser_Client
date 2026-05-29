@@ -8,3 +8,8 @@ server:
   write_timeout_seconds: 15
 docker:
   api_url: http://host.docker.internal:2375
+status_sync:
+  enabled: true
+  interval_seconds: 5
+  watchdog_seconds: 15
+  stale_seconds: 30

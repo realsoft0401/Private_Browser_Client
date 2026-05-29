@@ -84,11 +84,17 @@ func normalizeCreateRequest(param *model.CreateBrowserEnvRequest) (*model.Create
 		if param.Proxy.Type != "clash-verge" {
 			return nil, invalidError("proxy.type 第一版仅支持 clash-verge")
 		}
-		if strings.TrimSpace(param.Proxy.Config) == "" {
-			return nil, invalidError("proxy.enabled=true 时 proxy.config 不能为空")
+		config, err := decodeProxyConfigBase64(param.Proxy.ConfigBase64)
+		if err != nil {
+			return nil, err
 		}
+		if strings.TrimSpace(config) == "" {
+			return nil, invalidError("proxy.enabled=true 时 proxy.configBase64 不能为空")
+		}
+		param.Proxy.Config = config
 	} else {
 		param.Proxy.Type = ""
+		param.Proxy.ConfigBase64 = ""
 		param.Proxy.Config = ""
 	}
 	if param.Metadata.Source == "" {

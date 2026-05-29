@@ -14,6 +14,7 @@ import (
 
 	"private_browser_client/Infrastructures/SQLite"
 	"private_browser_client/Routes"
+	BrowserEnvService "private_browser_client/Service/BrowserEnv"
 	"private_browser_client/Settings"
 )
 
@@ -34,7 +35,9 @@ func Init(projectRoot string) error {
 	if err := initDependencies(projectRoot); err != nil {
 		return err
 	}
+	BrowserEnvService.StartStatusSyncManager()
 	defer func() {
+		BrowserEnvService.StopStatusSyncManager()
 		if err := SQLite.Close(); err != nil {
 			log.Printf("close sqlite failed: %v\n", err)
 		}

@@ -20,6 +20,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+              example:
+                ok: true
+                service: private-browser-client
+                mode: dev
+                version: 0.1.0
+                configFile: /path/to/Settings/config-dev.yaml
+                dockerApi: http://127.0.0.1:2375
+                statusSync:
+                  enabled: true
+                  workerRunning: true
+                  restarts: 0
+                  intervalSeconds: 5
+                  watchdogSeconds: 15
+                  staleSeconds: 30
+                  lastStartedAt: 1779956193
+                  lastHeartbeatAt: 1779956198
+                  lastFinishedAt: 1779956198
+                  lastSuccessAt: 1779956198
+                  lastScannedCount: 1
+                  lastUpdatedCount: 1
   /api/v1/edge/device-info:
     get:
       summary: 获取本机设备能力信息
@@ -99,8 +119,8 @@ paths:
                     containers: -1
   /api/v1/edge/docker/containers:
     get:
-      summary: 获取本机 Docker 容器列表
-      description: 请求本机 Docker Engine API 的 /containers/json?all=true，返回运行中和已停止容器摘要。不写数据库，不需要 nodeId。
+      summary: 获取本项目相关 Docker 容器列表
+      description: 请求本机 Docker Engine API 的 /containers/json?all=true，但只返回 Private_Browser_Client 项目相关容器：edge-service 表示边缘服务自身容器，browser-env 表示浏览器环境容器。不写数据库，不需要 nodeId。
       tags: [Edge]
       responses:
         '200':
@@ -114,7 +134,7 @@ paths:
                 message: success
                 data:
                   - id: abc123
-                    names: ["/browser-001"]
+                    names: ["/bv-318275706305908736-tk-318578131780767744"]
                     image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
                     imageId: sha256:example
                     command: "/start.sh"
@@ -124,9 +144,18 @@ paths:
                         privatePort: 5900
                         publicPort: 5901
                         type: tcp
-                    labels: {}
+                    labels:
+                      bv.project: private-browser-client
+                      bv.role: browser-env
+                      bv.envId: 318275706305908736_tk_318578131780767744
+                      bv.userId: "318275706305908736"
+                      bv.rpaType: tk
                     state: running
                     status: Up 10 minutes
+                    projectRole: browser-env
+                    envId: 318275706305908736_tk_318578131780767744
+                    userId: "318275706305908736"
+                    rpaType: tk
   /api/v1/edge/docker/pull-image:
     post:
       summary: 拉取本机 Docker 镜像
@@ -387,7 +416,7 @@ paths:
               proxy:
                 enabled: true
                 type: clash-verge
-                config: "mode: rule\nmixed-port: 7897\n"
+                configBase64: bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg==
               fingerprint:
                 backup: null
               metadata:
@@ -550,6 +579,97 @@ paths:
                   deviceArch: arm64
                   startedAt: 1779956193
                   reused: false
+  /api/v1/edge/browser-envs/{envId}/stop:
+    post:
+      summary: 停止本地浏览器环境包
+      description: 按 envId 停止环境包对应的本机 Docker 浏览器容器，并同步 container.json、manifest.lastRuntime 和 browser_envs 运行态字段。该接口不删除容器、镜像或 browser-data/profile 登录态目录。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopBrowserEnvRequest'
+            example:
+              timeoutSeconds: 10
+      responses:
+        '200':
+          description: 环境包停止结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopBrowserEnvSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  envId: 318275706305908736_tk_918273645001
+                  containerId: abc123
+                  containerName: bv-318275706305908736-tk-918273645001
+                  status: stopped
+                  containerStatus: stopped
+                  actionStatus: success
+                  message: ok
+                  stoppedAt: 1779956893
+  /api/v1/edge/browser-envs/{envId}/proxy:
+    patch:
+      summary: 修改环境包代理配置
+      description: 修改 profile.proxy 与 proxy/clash.yaml，并重算 binding.identityHash。配置不是热更新，只要实际发生变化就需要重新启动容器；如果环境包正在 running，接口会自动 forceRecreate 重建容器，让配置修改对用户无感知。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBrowserEnvProxyRequest'
+            example:
+              enabled: true
+              type: clash-verge
+              configBase64: bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg==
+      responses:
+        '200':
+          description: 代理配置修改结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateBrowserEnvProxySuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  envId: 318275706305908736_tk_318578131780767744
+                  status: stopped
+                  proxy:
+                    enabled: true
+                    type: clash-verge
+                    configPath: proxy/clash.yaml
+                    configHash: sha256:775d8817bed8ec4f5275d2aaff66103d5490c665f9b85cafc6194cf463dcb595
+                    configSizeBytes: 28
+                  bindingVersion: 2
+                  identityHash: sha256:c9439c86977482fa3b18e76696ad6428c61756970b9fc166afcb0fc75ef5cccb
+                  changed: true
+                  restartRequired: false
+                  restarted: true
+                  run:
+                    envId: 318275706305908736_tk_318578131780767744
+                    containerId: abc123
+                    containerName: bv-318275706305908736-tk-318578131780767744
+                    image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
+                    status: running
+                    ports:
+                      cdp: 8101
+                      vnc: 9101
+                    cdpUrl: http://127.0.0.1:8101
+                    vncUrl: vnc://127.0.0.1:9101
+                    dockerApiUrl: http://127.0.0.1:2375
+                    deviceArch: arm64
+                    startedAt: 1779956993
+                    reused: false
+                  updatedAt: 1779956993
   /api/v1/edge/browser-envs/{envId}/vnc-info:
     get:
       summary: 获取浏览器版 VNC 连接信息
@@ -613,6 +733,64 @@ components:
         dockerApi:
           type: string
           example: http://127.0.0.1:2375
+        statusSync:
+          $ref: '#/components/schemas/StatusSyncSnapshot'
+    StatusSyncSnapshot:
+      type: object
+      description: 后台浏览器环境状态同步任务健康快照。哨兵只重启同步 Worker，不重启浏览器容器。
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        workerRunning:
+          type: boolean
+          example: true
+        restarts:
+          type: integer
+          example: 0
+        intervalSeconds:
+          type: integer
+          example: 5
+        watchdogSeconds:
+          type: integer
+          example: 15
+        staleSeconds:
+          type: integer
+          example: 30
+        lastStartedAt:
+          type: integer
+          nullable: true
+          example: 1779956193
+        lastHeartbeatAt:
+          type: integer
+          nullable: true
+          example: 1779956198
+        lastFinishedAt:
+          type: integer
+          nullable: true
+          example: 1779956198
+        lastSuccessAt:
+          type: integer
+          nullable: true
+          example: 1779956198
+        lastError:
+          type: string
+          nullable: true
+          example: docker api containers failed
+        lastPanic:
+          type: string
+          nullable: true
+          example: ""
+        lastSkippedReason:
+          type: string
+          nullable: true
+          example: lifecycle lock busy
+        lastScannedCount:
+          type: integer
+          example: 1
+        lastUpdatedCount:
+          type: integer
+          example: 1
     StandardSuccess:
       type: object
       properties:
@@ -762,6 +940,23 @@ components:
         status:
           type: string
           example: Up 10 minutes
+        projectRole:
+          type: string
+          enum: [edge-service, browser-env]
+          description: 项目容器角色。edge-service 是 Private_Browser_Client 自身容器，browser-env 是浏览器环境容器。
+          example: browser-env
+        envId:
+          type: string
+          description: 浏览器环境容器对应的 envId；edge-service 为空。
+          example: 318275706305908736_tk_318578131780767744
+        userId:
+          type: string
+          description: 浏览器环境容器所属用户；edge-service 为空。
+          example: "318275706305908736"
+        rpaType:
+          type: string
+          description: 浏览器环境容器的 RPA 类型；edge-service 为空。
+          example: tk
     DockerContainerPort:
       type: object
       properties:
@@ -910,10 +1105,10 @@ components:
           type: string
           enum: [clash-verge]
           example: clash-verge
-        config:
+        configBase64:
           type: string
-          description: Clash Verge YAML 原文；enabled=true 时必填。
-          example: "mode: rule\nmixed-port: 7897\n"
+          description: Clash Verge YAML 原文的 Base64 编码；enabled=true 时必填。当前项目不兼容旧的明文 config 入参。
+          example: bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg==
     CreateBrowserEnvFingerprint:
       type: object
       properties:
@@ -1014,6 +1209,91 @@ components:
         reused:
           type: boolean
           example: false
+    StopBrowserEnvRequest:
+      type: object
+      properties:
+        timeoutSeconds:
+          type: integer
+          description: Docker stop 等待秒数；不传时后端默认 10 秒，给浏览器写盘和登录态同步留出缓冲。
+          example: 10
+    StopBrowserEnvResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        containerId:
+          type: string
+          nullable: true
+          example: abc123
+        containerName:
+          type: string
+          nullable: true
+          example: bv-318275706305908736-tk-918273645001
+        status:
+          type: string
+          example: stopped
+        containerStatus:
+          type: string
+          example: stopped
+        actionStatus:
+          type: string
+          description: Docker 动作结果；success 表示本次执行成功，not-modified 表示容器本来已经处于目标状态。
+          example: success
+        message:
+          type: string
+          example: ok
+        stoppedAt:
+          type: integer
+          example: 1779956893
+    UpdateBrowserEnvProxyRequest:
+      type: object
+      description: PATCH 语义的代理配置请求。代理 YAML 必须通过 configBase64 传入，服务端解码后写入 proxy/clash.yaml。
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        type:
+          type: string
+          description: 第一版仅支持 clash-verge。
+          example: clash-verge
+        configBase64:
+          type: string
+          description: 代理 YAML 原文的 Base64 编码。避免长 YAML 在 JSON 字符串中被截断或转义出错。
+          example: bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg==
+    UpdateBrowserEnvProxyResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_318578131780767744
+        status:
+          type: string
+          example: stopped
+        proxy:
+          $ref: '#/components/schemas/BrowserEnvProxyDetail'
+        bindingVersion:
+          type: integer
+          example: 2
+        identityHash:
+          type: string
+          example: sha256:c9439c86977482fa3b18e76696ad6428c61756970b9fc166afcb0fc75ef5cccb
+        changed:
+          type: boolean
+          example: true
+        restartRequired:
+          type: boolean
+          description: 非运行态修改时为 true，表示后续 run 才会生效；运行态修改会自动重建容器，因此为 false。
+          example: false
+        restarted:
+          type: boolean
+          description: 是否已由边缘服务自动完成容器重建。
+          example: true
+        run:
+          $ref: '#/components/schemas/RunBrowserEnvResponse'
+        updatedAt:
+          type: integer
+          example: 1779956993
     BrowserEnvVNCInfoResponse:
       type: object
       properties:
@@ -1368,6 +1648,20 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/RunBrowserEnvResponse'
+    StopBrowserEnvSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/StopBrowserEnvResponse'
+    UpdateBrowserEnvProxySuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/UpdateBrowserEnvProxyResponse'
     BrowserEnvVNCInfoSuccess:
       allOf:
         - $ref: '#/components/schemas/StandardSuccess'

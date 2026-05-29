@@ -92,10 +92,17 @@ func (s *Service) GetDockerImages() ([]edgeModel.DockerImage, error) {
 	return images, nil
 }
 
-// GetDockerContainers 获取本机 Docker 容器列表。
+// GetDockerContainers 获取本项目相关的本机 Docker 容器列表。
 //
-// 这里请求 `/containers/json?all=true`，因为边缘管理不仅需要运行中容器，也需要看到已停止容器，
-// 后续 start / stop / restart 才能基于同一套容器 ID 操作。
+// 设计来源：
+// - 用户测试发现直接返回本机 Docker 全量容器会混入其他项目，例如数据库、旧控制台或无关业务服务；
+// - 当前边缘服务只应该关心两个类型：Private_Browser_Client 边缘服务自身容器、由本项目创建的浏览器容器；
+// - 因此这里仍然请求 `/containers/json?all=true`，但会在 Service 层按 label/name/image 过滤并补 projectRole。
+//
+// 维护边界：
+// - 这个接口不再作为通用 Docker 容器浏览器；
+// - 浏览器容器优先通过 `bv.project/bv.role/bv.envId` 识别，兼容早期只有 `bv.envId` 的测试容器；
+// - 边缘服务容器优先通过 `private-browser-client` 名称、镜像或 label 识别。
 func (s *Service) GetDockerContainers() ([]edgeModel.DockerContainer, error) {
 	dockerAPIURL := normalizeDockerAPIURL(Settings.Conf.DockerConfig.APIURL)
 	if dockerAPIURL == "" {
@@ -109,7 +116,7 @@ func (s *Service) GetDockerContainers() ([]edgeModel.DockerContainer, error) {
 
 	containers := make([]edgeModel.DockerContainer, 0, len(rawList))
 	for _, raw := range rawList {
-		containers = append(containers, edgeModel.DockerContainer{
+		container := edgeModel.DockerContainer{
 			ID:      raw.ID,
 			Names:   normalizeStringSlice(raw.Names),
 			Image:   raw.Image,
@@ -120,7 +127,11 @@ func (s *Service) GetDockerContainers() ([]edgeModel.DockerContainer, error) {
 			Labels:  normalizeStringMap(raw.Labels),
 			State:   raw.State,
 			Status:  raw.Status,
-		})
+		}
+		if !applyProjectContainerMetadata(&container) {
+			continue
+		}
+		containers = append(containers, container)
 	}
 	return containers, nil
 }
@@ -422,6 +433,78 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// applyProjectContainerMetadata 判断容器是否属于当前项目，并补充项目角色。
+//
+// 设计来源：
+// - `/edge/docker/containers` 的使用场景是边缘控制台，不是通用 Docker 管理器；
+// - 用户明确要求容器列表只看本项目相关容器，并区分边缘服务自身和浏览器容器服务；
+// - 早期浏览器容器已经带 `bv.envId`，新容器会额外带 `bv.project/bv.role`，这里同时兼容两种识别方式。
+//
+// 返回 false 表示该容器是其他项目容器，不能出现在边缘服务容器列表里。
+func applyProjectContainerMetadata(container *edgeModel.DockerContainer) bool {
+	if container == nil {
+		return false
+	}
+	labels := container.Labels
+	if labels == nil {
+		labels = map[string]string{}
+		container.Labels = labels
+	}
+
+	if isBrowserEnvContainer(container) {
+		container.ProjectRole = "browser-env"
+		container.EnvID = labels["bv.envId"]
+		container.UserID = labels["bv.userId"]
+		container.RPAType = labels["bv.rpaType"]
+		return true
+	}
+	if isEdgeServiceContainer(container) {
+		container.ProjectRole = "edge-service"
+		return true
+	}
+	return false
+}
+
+// isBrowserEnvContainer 识别由本项目创建的浏览器环境容器。
+//
+// 新容器使用 `bv.project=private-browser-client` + `bv.role=browser-env`；
+// 为了让当前测试环境里的旧容器不丢失，也兼容 `bv.envId` 和 `bv-` 名称前缀。
+func isBrowserEnvContainer(container *edgeModel.DockerContainer) bool {
+	labels := container.Labels
+	if labels["bv.project"] == "private-browser-client" && labels["bv.role"] == "browser-env" {
+		return true
+	}
+	if strings.TrimSpace(labels["bv.envId"]) != "" {
+		return true
+	}
+	for _, name := range container.Names {
+		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(name), "/"), "bv-") {
+			return true
+		}
+	}
+	return false
+}
+
+// isEdgeServiceContainer 识别 Private_Browser_Client 边缘服务自身容器。
+//
+// 本地 `go run` 时服务不在 Docker 里，所以列表可能只出现 browser-env；
+// Docker 部署时推荐给容器加 `bv.project=private-browser-client,bv.role=edge-service`，
+// 同时这里也按容器名和镜像名兜底识别，方便 docker run/compose 不同部署方式。
+func isEdgeServiceContainer(container *edgeModel.DockerContainer) bool {
+	labels := container.Labels
+	if labels["bv.project"] == "private-browser-client" && labels["bv.role"] == "edge-service" {
+		return true
+	}
+	for _, name := range container.Names {
+		normalized := strings.TrimPrefix(strings.TrimSpace(name), "/")
+		if normalized == "private-browser-client" || strings.HasPrefix(normalized, "private-browser-client-") {
+			return true
+		}
+	}
+	image := strings.ToLower(strings.TrimSpace(container.Image))
+	return strings.Contains(image, "private-browser-client")
 }
 
 // normalizeStringSlice 把 Docker 可能返回的 nil 切片统一成空数组。
