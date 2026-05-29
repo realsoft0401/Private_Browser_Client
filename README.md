@@ -88,6 +88,8 @@ main.go
 |---|---|---|
 | GET | `/` | 服务信息 |
 | GET | `/health` | 健康检查，返回配置文件与 Docker API 地址 |
+| GET | `/swagger` | Swagger UI 接口文档页面 |
+| GET | `/openapi.yaml` | OpenAPI 原始 YAML |
 
 ### 边缘服务
 
@@ -193,7 +195,7 @@ curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs \
     "rpaType":"tk",
     "name":"tk-browser-001",
     "runtime":{
-      "image":"crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0"
+      "image":"crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1"
     },
     "environment":{
       "timezone":"America/Toronto",
@@ -255,6 +257,107 @@ curl 'http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/vnc-info'
 OpenAPI 文件：`docs/openapi.yaml`
 
 导入方式：Apifox → 导入 → OpenAPI / Swagger → 指向文件。
+
+服务启动后也可以直接打开：
+
+```text
+http://127.0.0.1:3300/swagger
+```
+
+`/swagger` 页面会优先加载本地 `/vendor/swagger-ui` 静态资源；当前镜像默认不内置该目录，会自动回退到 CDN。
+
+## Docker
+
+### 构建镜像
+
+在 `Private_Browser_Client` 项目根目录执行：
+
+```bash
+docker build -t private-browser-client:dev .
+```
+
+### 运行容器
+
+`data/` 必须挂载到宿主机目录。
+
+原因：
+
+- SQLite 数据库会写到 `/app/data/private_browser_client-docker.db`。
+- 浏览器环境包后续会写到 `/app/data/browser-envs/...`。
+- 这些都是边缘服务运行态数据，不应该打进镜像，也不应该跟随容器删除。
+
+先创建宿主机数据目录：
+
+```bash
+mkdir -p "$(pwd)/data"
+```
+
+Mac / Docker Desktop 运行示例：
+
+```bash
+docker run --rm \
+  --name private-browser-client \
+  -p 3300:3300 \
+  -v "$(pwd)/data:/app/data" \
+  private-browser-client:dev
+```
+
+后台运行示例：
+
+```bash
+docker run -d \
+  --name private-browser-client \
+  --restart unless-stopped \
+  -p 3300:3300 \
+  -v "$(pwd)/data:/app/data" \
+  private-browser-client:dev
+```
+
+Linux 如果容器需要访问宿主机 Docker 2375，可增加：
+
+```bash
+--add-host=host.docker.internal:host-gateway
+```
+
+Linux 完整示例：
+
+```bash
+docker run -d \
+  --name private-browser-client \
+  --restart unless-stopped \
+  -p 3300:3300 \
+  -v "$(pwd)/data:/app/data" \
+  --add-host=host.docker.internal:host-gateway \
+  private-browser-client:dev
+```
+
+容器默认使用 `Settings/config-docker.yaml`，其中 Docker API 地址是：
+
+```text
+http://host.docker.internal:2375
+```
+
+验证容器：
+
+```bash
+curl http://127.0.0.1:3300/health
+curl http://127.0.0.1:3300/openapi.yaml
+```
+
+浏览器打开：
+
+```text
+http://127.0.0.1:3300/swagger
+```
+
+停止和删除容器：
+
+```bash
+docker stop private-browser-client
+docker rm private-browser-client
+```
+
+注意：删除容器不会删除宿主机 `$(pwd)/data`，因此 SQLite 数据库和环境包仍然保留。
 
 ## 已清理的旧职责
 

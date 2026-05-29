@@ -35,6 +35,7 @@ func Setup() *gin.Engine {
 			"dockerApi":  Settings.Conf.DockerConfig.APIURL,
 		})
 	})
+	registerSwaggerDocs(r)
 	r.GET("/web-vnc.html", BrowserEnvService.WebVNCPage)
 	registerNoVNCStatic(r)
 
@@ -59,6 +60,32 @@ func Setup() *gin.Engine {
 	edge.GET("/browser-envs/:envId/vnc/ws", BrowserEnvService.ProxyBrowserEnvVNC)
 
 	return r
+}
+
+// registerSwaggerDocs 挂载 OpenAPI 和 Swagger UI。
+//
+// 设计来源：
+// - 用户已经用 Apifox 测试接口，现在又要求 Dockerfile 顺便“装上 swagger”；
+// - OpenAPI 主事实仍然是 docs/openapi.yaml，Swagger UI 只是容器部署后的浏览器查看入口；
+// - 这里不引入后端动态生成文档，避免接口文档和用户参与确认过的 openapi.yaml 分裂成两套来源。
+func registerSwaggerDocs(r *gin.Engine) {
+	swaggerUIDir := filepath.Join(Settings.Conf.ProjectRoot, "public", "vendor", "swagger-ui")
+	if stat, err := os.Stat(swaggerUIDir); err == nil && stat.IsDir() {
+		r.Static("/vendor/swagger-ui", swaggerUIDir)
+	}
+	r.GET("/openapi.yaml", func(c *gin.Context) {
+		c.File(filepath.Join(Settings.Conf.ProjectRoot, "docs", "openapi.yaml"))
+	})
+	r.GET("/swagger", swaggerPage)
+	r.GET("/swagger/", swaggerPage)
+}
+
+// swaggerPage 返回 Swagger UI 页面。
+//
+// 当前页面是很薄的一层静态壳，实际接口定义从 /openapi.yaml 读取；
+// 后续新增接口时只要维护 docs/openapi.yaml，Docker 中的 Swagger UI 会自动展示最新文档。
+func swaggerPage(c *gin.Context) {
+	c.File(filepath.Join(Settings.Conf.ProjectRoot, "public", "swagger.html"))
 }
 
 // registerNoVNCStatic 挂载 noVNC 前端资源。

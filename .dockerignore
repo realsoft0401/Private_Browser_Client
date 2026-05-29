@@ -1,0 +1,12 @@
+# Docker 构建上下文只需要源码、配置、文档和静态资源。
+# data / .tmp / IDE 文件 / 编译产物都是本机运行态，不应被打进镜像。
+.git
+.idea
+.tmp
+data
+.DS_Store
+private_browser_client
+*.db
+*.sqlite
+*.sqlite3
+*.log

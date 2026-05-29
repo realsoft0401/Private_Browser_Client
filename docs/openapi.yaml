@@ -90,7 +90,7 @@ paths:
                 message: success
                 data:
                   - id: sha256:example
-                    repoTags: ["crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0"]
+                    repoTags: ["crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1"]
                     repoDigests: []
                     created: 1779956193
                     size: 123456789
@@ -115,7 +115,7 @@ paths:
                 data:
                   - id: abc123
                     names: ["/browser-001"]
-                    image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+                    image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
                     imageId: sha256:example
                     command: "/start.sh"
                     created: 1779956193
@@ -374,7 +374,7 @@ paths:
               rpaType: tk
               name: tk-browser-001
               runtime:
-                image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+                image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
                 startupUrl: about:blank
                 shmSize: 1g
               environment:
@@ -465,7 +465,7 @@ paths:
                   profile:
                     name: tk-browser-001
                     runtime:
-                      image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+                      image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
                       enableVnc: true
                     ports:
                       cdp: 8101
@@ -539,7 +539,7 @@ paths:
                   envId: 318275706305908736_tk_918273645001
                   containerId: abc123
                   containerName: bv-318275706305908736-tk-918273645001
-                  image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+                  image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
                   status: running
                   ports:
                     cdp: 8101
@@ -704,7 +704,7 @@ components:
           type: array
           items:
             type: string
-          example: ["crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0"]
+          example: ["crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1"]
         repoDigests:
           type: array
           items:
@@ -738,7 +738,7 @@ components:
           example: ["/browser-001"]
         image:
           type: string
-          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
         imageId:
           type: string
           example: sha256:example
@@ -864,7 +864,7 @@ components:
       properties:
         image:
           type: string
-          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
         startupUrl:
           type: string
           default: about:blank
@@ -990,7 +990,7 @@ components:
           example: bv-318275706305908736-tk-918273645001
         image:
           type: string
-          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.0
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
         status:
           type: string
           example: running

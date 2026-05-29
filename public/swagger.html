@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Private Browser Client API</title>
+    <link
+      rel="stylesheet"
+      href="/vendor/swagger-ui/swagger-ui.css"
+      onerror="this.onerror=null;this.href='https://unpkg.com/swagger-ui-dist@5/swagger-ui.css';"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #f6f7f9;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="/vendor/swagger-ui/swagger-ui-bundle.js"></script>
+    <script>
+      function bootSwagger() {
+        window.ui = SwaggerUIBundle({
+          url: "/openapi.yaml",
+          dom_id: "#swagger-ui",
+          deepLinking: true,
+          presets: [SwaggerUIBundle.presets.apis],
+          layout: "BaseLayout"
+        });
+      }
+
+      window.addEventListener("load", function () {
+        if (window.SwaggerUIBundle) {
+          bootSwagger();
+          return;
+        }
+        var fallback = document.createElement("script");
+        fallback.src = "https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js";
+        fallback.onload = bootSwagger;
+        document.body.appendChild(fallback);
+      });
+    </script>
+  </body>
+</html>
