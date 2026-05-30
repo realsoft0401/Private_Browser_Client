@@ -23,6 +23,7 @@ import (
 )
 
 const containerCDPPort = 9222
+const timezoneRecreateLimit = 3
 
 var runEnvMu = sync.Mutex{}
 
@@ -116,7 +117,7 @@ func runBrowserEnvLocked(envID string, param *model.RunBrowserEnvRequest) (*mode
 				_ = updateRunError(envID, err.Error())
 				return nil, remoteError(err.Error())
 			}
-			return finalizeRunPackage(pkg, deviceInfo, existing.ID, true)
+			return finalizeRunPackage(edge, pkg, deviceInfo, existing.ID, true, timezoneRecreateLimit, true)
 		}
 	}
 
@@ -143,7 +144,7 @@ func runBrowserEnvLocked(envID string, param *model.RunBrowserEnvRequest) (*mode
 		_ = updateRunError(envID, err.Error())
 		return nil, remoteError(err.Error())
 	}
-	return finalizeRunPackage(pkg, deviceInfo, created.ID, false)
+	return finalizeRunPackage(edge, pkg, deviceInfo, created.ID, false, timezoneRecreateLimit, true)
 }
 
 // loadRunPackage 读取 run 所需的环境包文件。
@@ -429,7 +430,7 @@ func ensureTCPPortAvailable(port int) error {
 //
 // 这里写入的都是运行态字段：containerId、Docker API、deviceArch、lastStartedAt。
 // 它们不参与 identityHash，因此不会破坏账号环境原子绑定。
-func finalizeRunPackage(pkg *runPackage, deviceInfo *edgeModel.DeviceInfo, containerID string, reused bool) (*model.RunBrowserEnvResponse, error) {
+func finalizeRunPackage(edge *edgeService.Service, pkg *runPackage, deviceInfo *edgeModel.DeviceInfo, containerID string, reused bool, remainingTimezoneRecreates int, shouldProbeTimezone bool) (*model.RunBrowserEnvResponse, error) {
 	now := time.Now().Unix()
 	deviceArch := deviceInfo.DeviceArch
 	dockerAPIURL := deviceInfo.DockerAPIURL
@@ -459,6 +460,30 @@ func finalizeRunPackage(pkg *runPackage, deviceInfo *edgeModel.DeviceInfo, conta
 	if err := writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, "manifest.json"), pkg.Manifest); err != nil {
 		return nil, internalError(err.Error())
 	}
+	timezoneStatus := ""
+	timezoneError := ""
+	if !shouldProbeTimezone {
+		timezoneStatus = "verified"
+	}
+	if shouldProbeTimezone {
+		timezoneStatus = "verified"
+		probeResult, err := applyContainerTimezoneProbe(pkg, containerID)
+		if err != nil {
+			return nil, remoteError(err.Error())
+		}
+		if probeResult != nil && probeResult.ProbeFailed {
+			timezoneStatus = "failed"
+			timezoneError = probeResult.Error
+		}
+		if probeResult != nil && probeResult.NeedsContainerRecreate {
+			if remainingTimezoneRecreates <= 0 {
+				message := "timezone 探测结果在多次重建后仍变化，已停止继续自动重建"
+				_ = updateRunErrorWithRuntime(pkg, message, containerID)
+				return nil, remoteError(message)
+			}
+			return recreateContainerAfterTimezoneProbe(edge, pkg, deviceInfo, containerID, remainingTimezoneRecreates-1)
+		}
+	}
 
 	containerName := pkg.Container.ContainerName
 	if err := browserEnvDao.NewRuntimeModelHandler().UpdateBrowserEnvRuntime(context.Background(), &model.BrowserEnvRuntimeUpdate{
@@ -477,19 +502,66 @@ func finalizeRunPackage(pkg *runPackage, deviceInfo *edgeModel.DeviceInfo, conta
 	}
 
 	return &model.RunBrowserEnvResponse{
-		EnvID:         pkg.Manifest.EnvID,
-		ContainerID:   containerID,
-		ContainerName: pkg.Container.ContainerName,
-		Image:         pkg.Profile.Runtime.Image,
-		Status:        model.BrowserEnvStatusRunning,
-		Ports:         pkg.Profile.Ports,
-		CDPURL:        fmt.Sprintf("http://127.0.0.1:%d", pkg.Profile.Ports.CDP),
-		VNCURL:        fmt.Sprintf("vnc://127.0.0.1:%d", pkg.Profile.Ports.VNC),
-		DockerAPIURL:  dockerAPIURL,
-		DeviceArch:    deviceArch,
-		StartedAt:     now,
-		Reused:        reused,
+		EnvID:          pkg.Manifest.EnvID,
+		ContainerID:    containerID,
+		ContainerName:  pkg.Container.ContainerName,
+		Image:          pkg.Profile.Runtime.Image,
+		Status:         model.BrowserEnvStatusRunning,
+		Ports:          pkg.Profile.Ports,
+		CDPURL:         fmt.Sprintf("http://127.0.0.1:%d", pkg.Profile.Ports.CDP),
+		VNCURL:         fmt.Sprintf("vnc://127.0.0.1:%d", pkg.Profile.Ports.VNC),
+		DockerAPIURL:   dockerAPIURL,
+		DeviceArch:     deviceArch,
+		TimezoneStatus: timezoneStatus,
+		TimezoneError:  timezoneError,
+		StartedAt:      now,
+		Reused:         reused,
 	}, nil
+}
+
+// recreateContainerAfterTimezoneProbe 在 timezone 探测回写后重建容器。
+//
+// 设计来源：
+// - TZ 是 Docker 容器启动环境变量，浏览器进程启动后再改 profile.json 不会自动生效；
+// - 用户实测发现必须等 Clash/TUN 接管后才能得到真实出口 timezone；
+// - 因此容器会先用于初始化代理链路和探测真实 timezone，若探测值变化，必须用新 TZ 重建容器。
+//
+// 维护约束：
+// - 只允许有限次数重建，避免 provider 抖动导致无限循环；
+// - 不删除 browser-data/profile，只删除本次运行容器；
+// - 重建后的容器直接使用前一次探测回写的 TZ，避免 provider/CDP 二次等待拖慢 HTTP 响应。
+func recreateContainerAfterTimezoneProbe(edge *edgeService.Service, pkg *runPackage, deviceInfo *edgeModel.DeviceInfo, oldContainerID string, remainingTimezoneRecreates int) (*model.RunBrowserEnvResponse, error) {
+	if edge == nil {
+		edge = edgeService.NewEdgeService()
+	}
+	if err := edge.RemoveDockerContainer(oldContainerID, true); err != nil {
+		_ = updateRunErrorWithRuntime(pkg, err.Error(), oldContainerID)
+		return nil, remoteError(err.Error())
+	}
+	reloaded, err := loadRunPackage(pkg.Index)
+	if err != nil {
+		_ = updateRunError(pkg.Manifest.EnvID, err.Error())
+		return nil, internalError(err.Error())
+	}
+	if err = ensureRunPortsAvailable(reloaded.Profile.Ports); err != nil {
+		_ = updateRunError(pkg.Manifest.EnvID, err.Error())
+		return nil, conflictError(err.Error())
+	}
+	createConfig, err := buildDockerCreateConfig(reloaded)
+	if err != nil {
+		_ = updateRunError(pkg.Manifest.EnvID, err.Error())
+		return nil, internalError(err.Error())
+	}
+	created, err := edge.CreateDockerContainer(reloaded.Container.ContainerName, createConfig)
+	if err != nil {
+		_ = updateRunError(pkg.Manifest.EnvID, err.Error())
+		return nil, remoteError(err.Error())
+	}
+	if _, err = edge.StartDockerContainer(created.ID); err != nil {
+		_ = updateRunError(pkg.Manifest.EnvID, err.Error())
+		return nil, remoteError(err.Error())
+	}
+	return finalizeRunPackage(edge, reloaded, deviceInfo, created.ID, false, remainingTimezoneRecreates, false)
 }
 
 // updateRunError 把最近一次 run 失败写入 browser_envs。

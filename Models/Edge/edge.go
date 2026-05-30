@@ -210,6 +210,37 @@ type DockerContainerCreateResult struct {
 	Warnings []string `json:"Warnings,omitempty"`
 }
 
+// DockerContainerExecCreateConfig 是 Docker exec create 的受控请求体。
+//
+// 当前只供 BrowserEnv 容器内探测使用，不向前端开放任意 exec 能力。
+type DockerContainerExecCreateConfig struct {
+	AttachStdout bool     `json:"AttachStdout"`
+	AttachStderr bool     `json:"AttachStderr"`
+	Tty          bool     `json:"Tty"`
+	Cmd          []string `json:"Cmd"`
+}
+
+type DockerContainerExecCreateResult struct {
+	ID string `json:"Id"`
+}
+
+type DockerContainerExecStartConfig struct {
+	Detach bool `json:"Detach"`
+	Tty    bool `json:"Tty"`
+}
+
+type DockerContainerExecInspectResult struct {
+	ExitCode *int `json:"ExitCode"`
+	Running  bool `json:"Running"`
+}
+
+// DockerContainerExecResult 是容器内受控命令执行结果。
+type DockerContainerExecResult struct {
+	ExecID   string `json:"execId"`
+	Output   string `json:"output"`
+	ExitCode int    `json:"exitCode"`
+}
+
 // DockerPullEvent 是 Docker `/images/create` 流式响应的一条事件。
 //
 // Docker 拉取镜像会返回多行 JSON，这里保留常用状态字段，方便前端展示拉取进度和错误原因。

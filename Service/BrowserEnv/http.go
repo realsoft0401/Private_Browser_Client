@@ -107,6 +107,72 @@ func StopBrowserEnv(c *gin.Context) {
 	HttpResponse.ResponseSuccess(c, result)
 }
 
+// BackupBrowserEnvPackage 生成环境包备份 tar.gz。
+//
+// 备份接口只返回下载流，不删除源环境包、Docker 容器或 SQLite 索引；
+// Service 会拒绝 running 状态，避免 browser-data/profile 在写入过程中被打包。
+func BackupBrowserEnvPackage(c *gin.Context) {
+	result, err := NewService().BackupBrowserEnvPackage(c.Param("envId"))
+	if err != nil {
+		writeBrowserEnvError(c, err)
+		return
+	}
+	if result.Cleanup != nil {
+		defer result.Cleanup()
+	}
+	c.Header("Content-Type", "application/gzip")
+	c.FileAttachment(result.FilePath, result.FileName)
+}
+
+// ExportAndRemoveBrowserEnvPackage 导出环境包并从本机移除源环境。
+//
+// 这条接口用于迁移场景：下载包生成成功后，Service 会删除已停止容器、环境包目录和 SQLite 索引；
+// 前端必须在调用前提示用户“导出后本机不再保留该环境包”。
+func ExportAndRemoveBrowserEnvPackage(c *gin.Context) {
+	result, err := NewService().ExportAndRemoveBrowserEnvPackage(c.Param("envId"))
+	if err != nil {
+		writeBrowserEnvError(c, err)
+		return
+	}
+	if result.Cleanup != nil {
+		defer result.Cleanup()
+	}
+	c.Header("Content-Type", "application/gzip")
+	c.FileAttachment(result.FilePath, result.FileName)
+}
+
+// ImportBrowserEnvPackage 从 tar.gz 包导入本机环境包。
+//
+// HTTP 层只负责接收 multipart 文件；包结构校验、checksum、路径安全、端口重分配和索引落库都在 Service 层完成。
+func ImportBrowserEnvPackage(c *gin.Context) {
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "file 不能为空")
+		return
+	}
+	defer file.Close()
+
+	result, err := NewService().ImportBrowserEnvPackage(file, header)
+	if err != nil {
+		writeBrowserEnvError(c, err)
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
+// DeleteBrowserEnv 彻底删除本机浏览器环境包。
+//
+// HTTP 层只接收 envId；是否允许删除、running 冲突判断和索引更新都由 Service 完成。
+// 这条接口会删除配置目录和 browser-data/profile，前端必须在调用前提示用户“删除后无法找回”。
+func DeleteBrowserEnv(c *gin.Context) {
+	result, err := NewService().DeleteBrowserEnv(c.Param("envId"))
+	if err != nil {
+		writeBrowserEnvError(c, err)
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
 // GetBrowserEnvDetail 返回单个环境包详情。
 //
 // 详情接口读取 SQLite 索引和环境包文件，但不返回代理明文和指纹 raw；
@@ -143,6 +209,26 @@ func UpdateBrowserEnvProxy(c *gin.Context) {
 		return
 	}
 	result, err := NewService().UpdateBrowserEnvProxy(c.Param("envId"), param)
+	if err != nil {
+		writeBrowserEnvError(c, err)
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
+// UpdateBrowserEnvProxyMode 切换环境包 Clash 代理模式。
+//
+// 这条接口只修改 proxy/clash.yaml 的 mode 字段，不属于 run 参数；
+// running 环境会由 Service 自动重建容器，并重新执行容器内 timezone 探测。
+func UpdateBrowserEnvProxyMode(c *gin.Context) {
+	param := new(model.UpdateBrowserEnvProxyModeRequest)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(param); err != nil {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "请求参数格式错误")
+		return
+	}
+	result, err := NewService().UpdateBrowserEnvProxyMode(c.Param("envId"), param)
 	if err != nil {
 		writeBrowserEnvError(c, err)
 		return

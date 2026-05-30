@@ -38,6 +38,7 @@ func normalizeCreateRequest(param *model.CreateBrowserEnvRequest) (*model.Create
 	param.Environment.Timezone = strings.TrimSpace(param.Environment.Timezone)
 	param.Environment.Language = strings.TrimSpace(param.Environment.Language)
 	param.Proxy.Type = strings.TrimSpace(param.Proxy.Type)
+	param.Proxy.Mode = strings.ToLower(strings.TrimSpace(param.Proxy.Mode))
 	param.Metadata.Source = strings.TrimSpace(param.Metadata.Source)
 	param.Metadata.Description = strings.TrimSpace(param.Metadata.Description)
 
@@ -91,9 +92,22 @@ func normalizeCreateRequest(param *model.CreateBrowserEnvRequest) (*model.Create
 		if strings.TrimSpace(config) == "" {
 			return nil, invalidError("proxy.enabled=true 时 proxy.configBase64 不能为空")
 		}
+		if param.Proxy.Mode != "" {
+			mode, err := normalizeClashMode(param.Proxy.Mode)
+			if err != nil {
+				return nil, err
+			}
+			updatedConfig, _, err := replaceClashMode(config, mode)
+			if err != nil {
+				return nil, err
+			}
+			param.Proxy.Mode = mode
+			config = updatedConfig
+		}
 		param.Proxy.Config = config
 	} else {
 		param.Proxy.Type = ""
+		param.Proxy.Mode = ""
 		param.Proxy.ConfigBase64 = ""
 		param.Proxy.Config = ""
 	}
@@ -111,7 +125,7 @@ func normalizeCreateRequest(param *model.CreateBrowserEnvRequest) (*model.Create
 //
 // 设计来源：
 // - 列表接口直接面向前端分页和筛选，如果不统一 page/pageSize/status 规则，后续统计和列表很容易口径不一致；
-// - 默认不显示 deleted，是用户确认的假删除策略，查看回收站必须显式传 status=deleted。
+// - 默认不显示 deleted，用于兼容历史假删除/归档记录；当前 DELETE 会物理删除目录并移除索引。
 //
 // 职责边界：
 // - 这里只做查询参数清洗、分页兜底和枚举校验；
@@ -145,7 +159,7 @@ func normalizeListQuery(query model.ListBrowserEnvQuery) (model.ListBrowserEnvQu
 
 // isSupportedBrowserEnvStatus 统一判断 browser_envs.status 枚举。
 //
-// 状态枚举会同时影响查询、软删除、run/stop 状态刷新；
+// 状态枚举会同时影响查询、run/stop 状态刷新和历史 deleted 记录兼容；
 // 单独抽出来是为了后续新增状态时只改一个入口，避免接口层和数据库层各写一份判断。
 func isSupportedBrowserEnvStatus(status string) bool {
 	switch status {

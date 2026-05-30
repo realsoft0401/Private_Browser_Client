@@ -173,6 +173,7 @@ func readProxyDetail(envPath string, profile model.ProfileFile, paths model.Mani
 			detail.ConfigPath = configPath
 			detail.ConfigHash = buildTextHash(proxyConfigText)
 			detail.ConfigSizeBytes = len(bytes)
+			detail.Mode = extractClashMode(proxyConfigText)
 		} else if !os.IsNotExist(err) {
 			return detail, "", false, fmt.Errorf("读取代理配置摘要失败: %w", err)
 		}

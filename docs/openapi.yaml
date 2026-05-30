@@ -416,6 +416,7 @@ paths:
               proxy:
                 enabled: true
                 type: clash-verge
+                mode: rule
                 configBase64: bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg==
               fingerprint:
                 backup: null
@@ -453,6 +454,46 @@ paths:
                   identityHash: sha256:xxx
                   configHash: sha256:xxx
                   createdAt: 1779956193
+  /api/v1/edge/browser-envs/import-package:
+    post:
+      summary: 导入浏览器环境包
+      description: 上传 backup-package 或 export-and-remove 生成的标准 .tar.gz 环境包。导入会校验单根目录、manifest、标准文件和 checksums；默认保留原 envId，若本机已存在同名环境包则拒绝。导入后重新分配本机 envSequence/CDP/VNC，并把容器运行态重置为 created，下一次 run 会重新执行容器内 timezone 探测。
+      tags: [Edge]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 标准环境包 .tar.gz 文件。
+      responses:
+        '200':
+          description: 环境包导入结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportBrowserEnvPackageSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  envId: 318275706305908736_tk_918273645001
+                  userId: "318275706305908736"
+                  rpaType: tk
+                  envSequence: 2
+                  ports:
+                    cdp: 8102
+                    vnc: 9102
+                  envPath: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+                  status: created
+                  importedAt: 1779957193
+        '409':
+          description: 本机已存在同名 envId 或目标目录。
   /api/v1/edge/browser-envs/{envId}:
     get:
       summary: 获取本地浏览器环境包详情
@@ -539,6 +580,29 @@ paths:
                     vncUrl: vnc://127.0.0.1:9101
                     vncWsUrl: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
                     webVncUrl: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+    delete:
+      summary: 彻底删除本地浏览器环境包
+      description: 物理删除环境包目录，包括 manifest/profile/binding/proxy/fingerprint/browser-data/profile，删除关联的已停止 Docker 容器，并移除 SQLite browser_envs 索引记录。该操作无法通过 rebuild-index 找回；不会删除浏览器镜像，也不会自动停止 running 容器。如果环境包仍在 running，会返回状态冲突，调用方应先 stop。前端必须在调用前提示用户谨慎操作、删除后无法恢复。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      responses:
+        '200':
+          description: 环境包彻底删除结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteBrowserEnvSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  envId: 318275706305908736_tk_918273645001
+                  status: deleted
+                  actionStatus: deleted
+                  message: 环境包已彻底删除，配置文件、browser-data/profile 和关联容器无法找回
+                  deletedAt: 1779957093
+                  updatedAt: 1779957093
   /api/v1/edge/browser-envs/{envId}/run:
     post:
       summary: 启动本地浏览器环境包
@@ -613,6 +677,50 @@ paths:
                   actionStatus: success
                   message: ok
                   stoppedAt: 1779956893
+  /api/v1/edge/browser-envs/{envId}/backup-package:
+    post:
+      summary: 备份本地浏览器环境包
+      description: 生成标准 .tar.gz 环境包下载流。该接口不删除源环境包目录、Docker 容器、浏览器镜像或 SQLite 索引；如果环境包仍在 running，会返回状态冲突，调用方应先 stop。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      responses:
+        '200':
+          description: 环境包 tar.gz 下载流
+          headers:
+            Content-Disposition:
+              description: 附件文件名，格式通常为 {envId}-backup-{timestamp}.tar.gz。
+              schema:
+                type: string
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        '409':
+          description: 环境包仍在运行中，必须先 stop。
+  /api/v1/edge/browser-envs/{envId}/export-and-remove:
+    post:
+      summary: 导出并移除本地浏览器环境包
+      description: 生成标准 .tar.gz 环境包下载流；归档生成成功后删除关联的已停止 Docker 容器、源环境包目录和 SQLite 索引。该接口不会自动停止 running 容器，也不会删除浏览器镜像；如果环境包仍在 running，会返回状态冲突，调用方应先 stop。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      responses:
+        '200':
+          description: 环境包 tar.gz 下载流
+          headers:
+            Content-Disposition:
+              description: 附件文件名，格式通常为 {envId}-export-{timestamp}.tar.gz。
+              schema:
+                type: string
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        '409':
+          description: 环境包仍在运行中，必须先 stop。
   /api/v1/edge/browser-envs/{envId}/proxy:
     patch:
       summary: 修改环境包代理配置
@@ -629,6 +737,7 @@ paths:
             example:
               enabled: true
               type: clash-verge
+              mode: global
               configBase64: bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg==
       responses:
         '200':
@@ -646,6 +755,7 @@ paths:
                   proxy:
                     enabled: true
                     type: clash-verge
+                    mode: global
                     configPath: proxy/clash.yaml
                     configHash: sha256:775d8817bed8ec4f5275d2aaff66103d5490c665f9b85cafc6194cf463dcb595
                     configSizeBytes: 28
@@ -653,7 +763,8 @@ paths:
                   identityHash: sha256:c9439c86977482fa3b18e76696ad6428c61756970b9fc166afcb0fc75ef5cccb
                   changed: true
                   restartRequired: false
-                  restarted: true
+                  restartQueued: true
+                  restarted: false
                   run:
                     envId: 318275706305908736_tk_318578131780767744
                     containerId: abc123
@@ -670,6 +781,48 @@ paths:
                     startedAt: 1779956993
                     reused: false
                   updatedAt: 1779956993
+  /api/v1/edge/browser-envs/{envId}/proxy-mode:
+    patch:
+      summary: 切换 Clash 代理模式
+      description: 只修改 proxy/clash.yaml 顶层 mode 字段，支持 rule/global/direct。该接口属于代理配置修改能力，不是 run 参数；running 环境会自动 forceRecreate，并重新执行容器内 timezone 探测。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBrowserEnvProxyModeRequest'
+            example:
+              mode: global
+      responses:
+        '200':
+          description: 代理模式修改结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateBrowserEnvProxySuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  envId: 318275706305908736_tk_318578131780767744
+                  status: running
+                  proxy:
+                    enabled: true
+                    type: clash-verge
+                    mode: global
+                    configPath: proxy/clash.yaml
+                    configHash: sha256:xxx
+                    configSizeBytes: 4421
+                  bindingVersion: 11
+                  identityHash: sha256:xxx
+                  changed: true
+                  restartRequired: false
+                  restartQueued: true
+                  restarted: false
+                  updatedAt: 1779957993
   /api/v1/edge/browser-envs/{envId}/vnc-info:
     get:
       summary: 获取浏览器版 VNC 连接信息
@@ -1105,6 +1258,11 @@ components:
           type: string
           enum: [clash-verge]
           example: clash-verge
+        mode:
+          type: string
+          enum: [rule, global, direct]
+          description: 可选。创建时写入 proxy/clash.yaml 顶层 mode；不传则保留 configBase64 原文中的 mode。
+          example: rule
         configBase64:
           type: string
           description: Clash Verge YAML 原文的 Base64 编码；enabled=true 时必填。当前项目不兼容旧的明文 config 入参。
@@ -1203,6 +1361,15 @@ components:
         deviceArch:
           type: string
           example: arm64
+        timezoneStatus:
+          type: string
+          description: 本次 run 附带的容器内 timezone 探测状态。verified 表示已确认并回写；failed 表示 provider/CDP/curl 超时或失败，但容器启动/重建结果仍会返回。
+          enum: [verified, failed]
+          example: verified
+        timezoneError:
+          type: string
+          description: timezoneStatus=failed 时的失败摘要。
+          example: timezone probe timeout
         startedAt:
           type: integer
           example: 1779956193
@@ -1246,6 +1413,59 @@ components:
         stoppedAt:
           type: integer
           example: 1779956893
+    DeleteBrowserEnvResponse:
+      type: object
+      description: 环境包彻底删除结果。DELETE 会删除环境包目录、browser-data/profile 和关联的已停止 Docker 容器，并移除 SQLite 索引记录；响应中的 status=deleted 只表示本次动作结果。
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        status:
+          type: string
+          enum: [deleted]
+          example: deleted
+        actionStatus:
+          type: string
+          description: deleted 表示本次已经删除环境包目录和索引。
+          enum: [deleted]
+          example: deleted
+        message:
+          type: string
+          example: 环境包已彻底删除，配置文件、browser-data/profile 和关联容器无法找回
+        deletedAt:
+          type: integer
+          example: 1779957093
+        updatedAt:
+          type: integer
+          example: 1779957093
+    ImportBrowserEnvPackageResponse:
+      type: object
+      description: 环境包导入结果。导入保留原 envId，但重新分配本机 envSequence 与 CDP/VNC 端口，并把容器运行态重置为 created。
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        userId:
+          type: string
+          example: "318275706305908736"
+        rpaType:
+          type: string
+          example: tk
+        envSequence:
+          type: integer
+          example: 2
+        ports:
+          $ref: '#/components/schemas/CreateBrowserEnvPorts'
+        envPath:
+          type: string
+          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+        status:
+          type: string
+          enum: [created]
+          example: created
+        importedAt:
+          type: integer
+          example: 1779957193
     UpdateBrowserEnvProxyRequest:
       type: object
       description: PATCH 语义的代理配置请求。代理 YAML 必须通过 configBase64 传入，服务端解码后写入 proxy/clash.yaml。
@@ -1257,10 +1477,24 @@ components:
           type: string
           description: 第一版仅支持 clash-verge。
           example: clash-verge
+        mode:
+          type: string
+          enum: [rule, global, direct]
+          description: 可选。和 configBase64 同时传入时，后端先解码 YAML，再覆盖顶层 mode；单独传入时只修改现有 proxy/clash.yaml 顶层 mode。
+          example: global
         configBase64:
           type: string
           description: 代理 YAML 原文的 Base64 编码。避免长 YAML 在 JSON 字符串中被截断或转义出错。
           example: bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg==
+    UpdateBrowserEnvProxyModeRequest:
+      type: object
+      required: [mode]
+      description: 切换 Clash 顶层 mode 字段。该字段属于 proxy/clash.yaml 配置事实，不属于 run 生命周期参数。
+      properties:
+        mode:
+          type: string
+          enum: [rule, global, direct]
+          example: global
     UpdateBrowserEnvProxyResponse:
       type: object
       properties:
@@ -1285,10 +1519,14 @@ components:
           type: boolean
           description: 非运行态修改时为 true，表示后续 run 才会生效；运行态修改会自动重建容器，因此为 false。
           example: false
+        restartQueued:
+          type: boolean
+          description: 运行态修改时为 true，表示后端已把 forceRecreate 放入后台队列，接口不等待 Docker 重建和 timezone provider。
+          example: true
         restarted:
           type: boolean
-          description: 是否已由边缘服务自动完成容器重建。
-          example: true
+          description: 是否已由边缘服务在当前 HTTP 请求内同步完成容器重建；PATCH proxy 运行态通常返回 restartQueued=true、restarted=false。
+          example: false
         run:
           $ref: '#/components/schemas/RunBrowserEnvResponse'
         updatedAt:
@@ -1355,6 +1593,9 @@ components:
         type:
           type: string
           example: clash-verge
+        mode:
+          type: string
+          example: rule
         configPath:
           type: string
           example: proxy/clash.yaml
@@ -1655,6 +1896,20 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/StopBrowserEnvResponse'
+    DeleteBrowserEnvSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DeleteBrowserEnvResponse'
+    ImportBrowserEnvPackageSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/ImportBrowserEnvPackageResponse'
     UpdateBrowserEnvProxySuccess:
       allOf:
         - $ref: '#/components/schemas/StandardSuccess'

@@ -107,6 +107,7 @@ type CreateScreenRequest struct {
 type CreateProxyRequest struct {
 	Enabled      *bool  `json:"enabled"`
 	Type         string `json:"type"`
+	Mode         string `json:"mode"`
 	ConfigBase64 string `json:"configBase64"`
 	Config       string `json:"-"`
 }
@@ -198,8 +199,15 @@ type RunBrowserEnvResponse struct {
 	VNCURL        string          `json:"vncUrl"`
 	DockerAPIURL  string          `json:"dockerApiUrl"`
 	DeviceArch    string          `json:"deviceArch"`
-	StartedAt     int64           `json:"startedAt"`
-	Reused        bool            `json:"reused"`
+	// TimezoneStatus 表示本次 run 附带的容器内 timezone 探测状态。
+	//
+	// 设计来源：
+	// - 用户实测 provider/CDP 请求可能耗时过长，导致 PATCH proxy 或 run 没有 HTTP 返回；
+	// - 因此 timezone 探测不再无限阻塞容器生命周期响应，失败会写入 proxy-runtime 并通过这里返回摘要。
+	TimezoneStatus string `json:"timezoneStatus,omitempty"`
+	TimezoneError  string `json:"timezoneError,omitempty"`
+	StartedAt      int64  `json:"startedAt"`
+	Reused         bool   `json:"reused"`
 }
 
 // StopBrowserEnvRequest 是停止环境包对应容器的请求体。
@@ -227,6 +235,38 @@ type StopBrowserEnvResponse struct {
 	StoppedAt       int64   `json:"stoppedAt"`
 }
 
+// DeleteBrowserEnvResponse 是环境包物理删除后的响应摘要。
+//
+// 设计来源：
+// - 用户确认 DELETE 代表彻底删除，避免未来 rebuild-index 把不想要的环境包重新扫回来；
+// - 前端负责给出“无法找回”的强提示，后端负责校验路径边界并删除环境包目录和索引记录；
+// - status 保持 deleted 是对接口调用结果的表达，不表示数据库仍保留一条 deleted 记录。
+type DeleteBrowserEnvResponse struct {
+	EnvID        string `json:"envId"`
+	Status       string `json:"status"`
+	ActionStatus string `json:"actionStatus"`
+	Message      string `json:"message"`
+	DeletedAt    int64  `json:"deletedAt"`
+	UpdatedAt    int64  `json:"updatedAt"`
+}
+
+// ImportBrowserEnvPackageResponse 是导入环境包后的摘要。
+//
+// 设计来源：
+// - 备份/导出包会携带原 envId，但导入到本机时端口和 envSequence 属于本机资源，必须重新分配；
+// - 导入只恢复环境包文件和 SQLite 索引，不启动 Docker，不沿用旧容器 ID；
+// - timezone 会在下一次 run 时通过容器内 provider 重新确认，因此这里返回 status=created。
+type ImportBrowserEnvPackageResponse struct {
+	EnvID       string          `json:"envId"`
+	UserID      string          `json:"userId"`
+	RPAType     string          `json:"rpaType"`
+	EnvSequence int             `json:"envSequence"`
+	Ports       BrowserEnvPorts `json:"ports"`
+	EnvPath     string          `json:"envPath"`
+	Status      string          `json:"status"`
+	ImportedAt  int64           `json:"importedAt"`
+}
+
 // BrowserEnvVNCInfoResponse 是浏览器版 VNC 连接信息。
 //
 // 设计来源：
@@ -246,10 +286,17 @@ type BrowserEnvVNCInfoResponse struct {
 // 设计来源：
 // - 用户明确要求“只要改的东西，就需要重新启动容器”；
 // - 代理配置会进入 run 阶段的容器环境变量，并参与 identityHash；
-// - 因此这里使用 PATCH 语义允许局部字段，但只要实际值变化，就必须返回 restartRequired=true。
+// - 因此这里使用 PATCH 语义允许局部字段；running 环境会进入后台重建队列，非 running 环境返回 restartRequired=true。
 type UpdateBrowserEnvProxyRequest struct {
 	Enabled *bool   `json:"enabled"`
 	Type    *string `json:"type"`
+	// Mode 是 Clash 顶层代理模式。
+	//
+	// 设计来源：
+	// - 用户确认创建和修改代理时也应该能同时切换 rule/global/direct；
+	// - mode 属于 proxy/clash.yaml 的配置事实，不能放进 run 临时参数；
+	// - 如果和 configBase64 同时传入，后端会先解码 YAML，再写入顶层 mode。
+	Mode *string `json:"mode"`
 	// ConfigBase64 是代理 YAML 原文的 Base64 编码。
 	//
 	// 设计来源：
@@ -257,6 +304,16 @@ type UpdateBrowserEnvProxyRequest struct {
 	// - 旧容器启动链路本来就使用 CLASH_VERGE_CONFIG_BASE64 传入代理配置；
 	// - 因此修改接口也改为优先接收 configBase64，后端解码后再写入 proxy/clash.yaml。
 	ConfigBase64 *string `json:"configBase64"`
+}
+
+// UpdateBrowserEnvProxyModeRequest 是切换 Clash 代理模式的请求体。
+//
+// 设计来源：
+// - 用户确认规则模式/全局模式不应塞进 run 参数，而应作为代理配置修改接口；
+// - mode 属于 proxy/clash.yaml 的事实，不属于容器生命周期参数；
+// - 切换后需要走和代理配置修改相同的重建与 timezone 重新探测链路。
+type UpdateBrowserEnvProxyModeRequest struct {
+	Mode string `json:"mode"`
 }
 
 // UpdateBrowserEnvProxyResponse 是代理配置修改后的摘要。
@@ -270,10 +327,17 @@ type UpdateBrowserEnvProxyResponse struct {
 	IdentityHash    string                `json:"identityHash"`
 	Changed         bool                  `json:"changed"`
 	RestartRequired bool                  `json:"restartRequired"`
-	// Restarted 表示本次修改已由边缘服务自动完成容器重建。
+	// RestartQueued 表示本次修改已经把运行中环境放入后台重建队列。
+	//
+	// 设计来源：
+	// - rule 模式 timezone 需要通过 CDP 请求外部 provider，耗时不可控；
+	// - 如果 PATCH proxy 同步等待 Docker 重建和 timezone，前端/Apifox 容易出现 socket hang up；
+	// - 因此 running 环境改为快速返回，后台串行 forceRecreate。
+	RestartQueued bool `json:"restartQueued"`
+	// Restarted 表示本次修改已由边缘服务同步完成容器重建。
 	//
 	// 用户明确要求配置修改后的启动过程对使用者无感知；
-	// 因此 running 状态下发生真实配置变化时，接口会自动 forceRecreate 并把结果写到 Run。
+	// 该字段保留给同步重建场景；当前 PATCH proxy 的 running 重建主要通过 RestartQueued 表达。
 	Restarted bool                   `json:"restarted"`
 	Run       *RunBrowserEnvResponse `json:"run,omitempty"`
 	UpdatedAt int64                  `json:"updatedAt"`
@@ -353,6 +417,7 @@ type BrowserEnvBindingDetail struct {
 type BrowserEnvProxyDetail struct {
 	Enabled         bool             `json:"enabled"`
 	Type            string           `json:"type"`
+	Mode            string           `json:"mode,omitempty"`
 	ConfigPath      string           `json:"configPath"`
 	ConfigHash      string           `json:"configHash"`
 	ConfigSizeBytes int              `json:"configSizeBytes"`
@@ -449,7 +514,7 @@ type BrowserEnvConfigUpdate struct {
 // BrowserEnvIndex 是 browser_envs 表的索引型元数据模型。
 //
 // 设计来源：
-// - 用户要求边缘服务能查询“本机管理了多少配置文件”，并且支持假删除和后续状态监控；
+// - 用户要求边缘服务能查询“本机管理了多少配置文件”，并且支持后续状态监控；
 // - 所以这里保存的是环境包索引、状态快照和少量运行元信息，不保存 profile 原文、代理原文和登录态数据；
 // - 真正的大字段都留在文件系统里，数据库只做可查询索引层。
 //
@@ -506,7 +571,7 @@ type BrowserEnvIndex struct {
 	CreatedAt int64 `json:"createdAt"`
 	// UpdatedAt 是记录最近更新时间。
 	UpdatedAt int64 `json:"updatedAt"`
-	// DeletedAt 非空时表示假删除。
+	// DeletedAt 保留给历史假删除或后续归档兼容；当前 DELETE 会物理删除目录并移除索引。
 	DeletedAt *int64 `json:"deletedAt,omitempty"`
 	// LastStartedAt 保存最近一次启动时间。
 	LastStartedAt *int64 `json:"lastStartedAt,omitempty"`
@@ -550,16 +615,31 @@ type ScreenSize struct {
 
 // ManifestFile 是 manifest.json 的落盘结构。
 type ManifestFile struct {
-	SchemaVersion int                 `json:"schemaVersion"`
-	EnvID         string              `json:"envId"`
-	UserID        string              `json:"userId"`
-	RPAType       string              `json:"rpaType"`
-	SnowflakeID   string              `json:"snowflakeId"`
-	EnvSequence   int                 `json:"envSequence"`
-	Paths         ManifestPaths       `json:"paths"`
-	LastRuntime   ManifestLastRuntime `json:"lastRuntime"`
-	CreatedAt     int64               `json:"createdAt"`
-	UpdatedAt     int64               `json:"updatedAt"`
+	SchemaVersion  int                   `json:"schemaVersion"`
+	PackageVersion *int                  `json:"packageVersion,omitempty"`
+	EnvID          string                `json:"envId"`
+	UserID         string                `json:"userId"`
+	RPAType        string                `json:"rpaType"`
+	SnowflakeID    string                `json:"snowflakeId"`
+	EnvSequence    int                   `json:"envSequence"`
+	Paths          ManifestPaths         `json:"paths"`
+	LastRuntime    ManifestLastRuntime   `json:"lastRuntime"`
+	ExportedAt     *int64                `json:"exportedAt,omitempty"`
+	ExportSource   *ManifestExportSource `json:"exportSource,omitempty"`
+	ExportAction   string                `json:"exportAction,omitempty"`
+	Checksums      map[string]string     `json:"checksums,omitempty"`
+	CreatedAt      int64                 `json:"createdAt"`
+	UpdatedAt      int64                 `json:"updatedAt"`
+}
+
+// ManifestExportSource 记录环境包导出来源。
+//
+// 这些字段只写入 staging 副本，用于后续 import-package 审计包从哪里来；
+// 它们不是账号环境稳定身份，不能参与 identityHash。
+type ManifestExportSource struct {
+	Type           string `json:"type"`
+	Env            string `json:"env"`
+	ServiceVersion string `json:"serviceVersion"`
 }
 
 // ManifestPaths 统一记录环境包内相对路径。
@@ -704,6 +784,7 @@ type RuntimeProtection struct {
 	ExitIPChanged       *bool  `json:"exitIpChanged"`
 	HighRisk            *bool  `json:"highRisk"`
 	LastCheckedAt       *int64 `json:"lastCheckedAt"`
+	TimezoneStatus      string `json:"timezoneStatus,omitempty"`
 }
 
 // ContainerFile 是 container.json 的落盘结构。
@@ -755,11 +836,23 @@ type FingerprintBackupFile struct {
 }
 
 type ProxyRuntimeFile struct {
-	CheckedAt *int64  `json:"checkedAt"`
-	ExitIP    *string `json:"exitIp"`
-	Region    *string `json:"region"`
-	Country   *string `json:"country"`
-	Timezone  *string `json:"timezone"`
-	Source    *string `json:"source"`
-	Drift     bool    `json:"drift"`
+	CheckedAt *int64                 `json:"checkedAt"`
+	ExitIP    *string                `json:"exitIp"`
+	Region    *string                `json:"region"`
+	Country   *string                `json:"country"`
+	Timezone  *string                `json:"timezone"`
+	Source    *string                `json:"source"`
+	Status    string                 `json:"status,omitempty"`
+	Attempts  []TimezoneProbeAttempt `json:"attempts,omitempty"`
+	Drift     bool                   `json:"drift"`
+}
+
+// TimezoneProbeAttempt 记录容器内 timezone 探测的单个 provider 结果。
+//
+// 它只记录排障摘要，不保存完整响应体，避免把外部服务返回的大 JSON 写入环境包。
+type TimezoneProbeAttempt struct {
+	Provider string `json:"provider"`
+	URL      string `json:"url"`
+	OK       bool   `json:"ok"`
+	Error    string `json:"error,omitempty"`
 }

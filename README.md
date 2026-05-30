@@ -105,12 +105,17 @@ main.go
 | POST | `/api/v1/edge/containers/:id/start` | 启动本机 Docker 容器 |
 | POST | `/api/v1/edge/containers/:id/stop` | 停止本机 Docker 容器，请求体可为空 |
 | POST | `/api/v1/edge/containers/:id/restart` | 重启本机 Docker 容器，请求体可为空 |
-| GET | `/api/v1/edge/browser-envs` | 查询本机浏览器环境包索引列表，默认排除假删除 |
+| GET | `/api/v1/edge/browser-envs` | 查询本机浏览器环境包索引列表，默认排除历史 deleted/归档记录 |
 | POST | `/api/v1/edge/browser-envs` | 创建本地浏览器环境包文件，不启动 Docker |
+| POST | `/api/v1/edge/browser-envs/import-package` | 上传标准 tar.gz 环境包并导入本机，保留 envId，重新分配本机端口 |
 | GET | `/api/v1/edge/browser-envs/:envId` | 查询单个环境包详情，不返回代理明文和指纹 raw |
 | POST | `/api/v1/edge/browser-envs/:envId/run` | 按环境包创建或启动本机浏览器容器 |
 | POST | `/api/v1/edge/browser-envs/:envId/stop` | 按环境包停止本机浏览器容器，并同步运行态 |
+| POST | `/api/v1/edge/browser-envs/:envId/backup-package` | 备份环境包为 tar.gz 下载流，不删除本机环境包 |
+| POST | `/api/v1/edge/browser-envs/:envId/export-and-remove` | 导出环境包为 tar.gz 后删除本机源环境包和索引 |
+| DELETE | `/api/v1/edge/browser-envs/:envId` | 彻底删除环境包，删除配置目录、登录态目录、已停止容器和 SQLite 索引 |
 | PATCH | `/api/v1/edge/browser-envs/:envId/proxy` | 修改环境包代理配置，变更后需要重新启动容器 |
+| PATCH | `/api/v1/edge/browser-envs/:envId/proxy-mode` | 切换 Clash 规则/全局/直连模式，running 环境会自动重建 |
 | GET | `/api/v1/edge/browser-envs/:envId/vnc-info` | 获取浏览器版 VNC 连接信息 |
 | GET | `/api/v1/edge/browser-envs/:envId/vnc/ws` | noVNC WebSocket 到 VNC TCP 的代理通道 |
 | GET | `/web-vnc.html?envId=...` | 独立浏览器 VNC 页面 |
@@ -215,14 +220,17 @@ curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs \
     "proxy":{
       "enabled":true,
       "type":"clash-verge",
-      "config":"mode: rule\nmixed-port: 7897\n"
+      "mode":"rule",
+      "configBase64":"bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg=="
     },
     "metadata":{"description":"TikTok browser env"}
   }'
 ```
 
 该接口只写入 `data/browser-envs/users/{userId}/{rpaType}/{envId}` 环境包，不创建或启动 Docker 容器。
-创建成功后会同步写入 `browser_envs` SQLite 索引表，用于后续列表、假删除、运行状态和监控状态查询。
+创建成功后会同步写入 `browser_envs` SQLite 索引表，用于后续列表、运行状态和监控状态查询。
+创建阶段不会由 Go 边缘服务直接请求 IP 定位网站来最终确认 `timezone`。代理出口、DNS、TUN 和浏览器真实网络环境只在浏览器容器内成立，因此最终 `timezone` 必须在后续 `run` 阶段由容器内探测确认。创建请求里的 `environment.timezone` 只能作为初始值；后续容器内探测成功后，会以探测结果回写 `profile.environment.timezone`、`binding.identity.timezone` 并重算 `identityHash/configHash`。
+创建时可以通过 `proxy.mode` 指定 Clash 顶层模式，支持 `rule/global/direct`；如果不传，则保留 `configBase64` 里原有的 `mode`。
 
 查询浏览器环境包列表示例：
 
@@ -253,6 +261,29 @@ curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/run \
 
 `run` 接口只接受 envId 和 `forceRecreate`，镜像、端口、代理、指纹和浏览器数据挂载都从环境包文件读取。
 如果镜像未提前拉取，会返回明确错误，调用方应先执行 `/api/v1/edge/docker/pull-image`。
+后续 timezone 确认必须作为 `run` 生命周期的一部分执行：容器启动后，在浏览器容器内按顺序请求下面三个出口识别服务，只要任意一个返回可解析 `timezone` 即认为成功：
+
+```text
+1. https://ipwho.is
+2. http://ip-api.com/json
+3. https://ipapi.co/json/
+```
+
+成功后需要记录 provider、出口 IP、国家/地区、timezone 和 checkedAt，并把 timezone 回写到 profile/binding 后重算 hash。全部失败或超过探测预算时，应记录每个 provider 的失败原因，把 `proxy-runtime.status` 和响应里的 `timezoneStatus` 标记为 `failed`，但不阻塞容器启动/重建结果返回。这个请求不能由 Go 边缘服务宿主机直连完成，也不能由前端代替完成。
+
+代理启用时不能在容器刚启动后立刻取 timezone，因为 Clash/TUN/DNS 可能还没有完全接管，早期请求可能走直连出口。当前 run 流程会先等待容器内 Clash/Mihomo 进程出现并给代理链路一段初始化时间，再按 `proxy/clash.yaml` 顶层 `mode` 选择探测入口：
+
+```text
+mode: rule
+  使用浏览器 CDP 页面访问 provider。
+  页面导航后等待 10 秒再读取响应并关闭临时页面，确保域名规则、浏览器链路和页面网络行为参与判断。
+
+mode: global / direct
+  使用容器 shell 的 curl/wget 探测。
+  curl 会读取 mixed-port，并显式使用 curl -x http://127.0.0.1:{mixed-port} 进入 Clash。
+```
+
+rule 模式不再把 curl 作为自动兜底；global/direct 模式也不走 CDP。这样 timezone 结果和当前 Clash 模式一一对应，避免排障时混淆“浏览器规则链路”和“容器命令行链路”。整个 timezone probe 有固定时间预算，避免外部 provider 或 CDP 长时间无响应导致接口 `socket hang up`。如果探测到的 timezone 和容器启动时的 `TZ` 不一致，后端会先写回 profile/binding，然后重建浏览器容器让新 `TZ` 生效；重建后的容器不再同步发起第二轮 provider/CDP 请求，避免接口等待时间翻倍。
 
 停止浏览器环境包示例：
 
@@ -265,6 +296,50 @@ curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/stop \
 `stop` 接口围绕 envId 停止容器，并回写 `container.json`、`manifest.lastRuntime` 和 SQLite `browser_envs` 运行态。
 它不会删除容器、镜像或 `browser-data/profile` 登录态目录。
 
+备份浏览器环境包示例：
+
+```bash
+curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/backup-package \
+  -o {envId}-backup.tar.gz
+```
+
+备份接口会把环境包复制到 staging，补充导出元信息和 checksums 后生成 `.tar.gz` 下载流。
+它不会删除源环境包目录、Docker 容器、浏览器镜像或 SQLite 索引。
+如果环境包仍在运行中，接口会返回状态冲突，调用方应先执行 `stop`。
+
+导出并移除浏览器环境包示例：
+
+```bash
+curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/export-and-remove \
+  -o {envId}-export.tar.gz
+```
+
+`export-and-remove` 使用和 `backup-package` 相同的 `.tar.gz` 包协议，但语义是迁移：下载包生成成功后，会删除关联的已停止 Docker 容器、源环境包目录和 SQLite 索引。
+它不会自动停止 running 容器，也不会删除浏览器镜像。
+如果环境包仍在运行中，接口会返回状态冲突，调用方应先执行 `stop`。
+
+导入浏览器环境包示例：
+
+```bash
+curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/import-package \
+  -F "file=@{envId}-export.tar.gz"
+```
+
+`import-package` 只接受本服务 `backup-package` 或 `export-and-remove` 生成的标准 `.tar.gz` 包。
+导入会校验单根目录、`manifest.json`、标准文件和 checksums；默认保留原 `envId`，如果本机已存在同名环境包会拒绝覆盖。
+导入到本机后会重新分配 `envSequence`、CDP/VNC 端口，并把容器运行态重置为 `created`；下一次 `run` 会重新在浏览器容器内探测 timezone。
+
+彻底删除浏览器环境包示例：
+
+```bash
+curl -X DELETE http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}
+```
+
+删除接口会物理删除环境包目录，包括 `manifest.json`、`profile.json`、`binding.json`、`proxy/`、`fingerprint/` 和 `browser-data/profile`，同时删除关联的已停止 Docker 容器并移除 SQLite `browser_envs` 索引记录。
+它不会删除浏览器运行镜像，也不会自动停止正在运行的容器。
+该操作无法通过 `rebuild-index` 找回，前端必须在调用前提示用户谨慎操作、删除后无法恢复。
+如果环境包仍在运行中，接口会返回状态冲突，调用方应先执行 `stop`。
+
 修改代理配置示例：
 
 ```bash
@@ -273,6 +348,7 @@ curl -X PATCH http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/proxy \
   -d '{
     "enabled": true,
     "type": "clash-verge",
+    "mode": "global",
     "configBase64": "bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg=="
   }'
 ```
@@ -283,10 +359,81 @@ curl -X PATCH http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/proxy \
 base64 -i clash.yaml | tr -d '\n'
 ```
 
+macOS 生成单行 Base64：
+
+```bash
+CONFIG_B64=$(base64 -i clash.yaml | tr -d '\n')
+```
+
+Linux 生成单行 Base64：
+
+```bash
+CONFIG_B64=$(base64 -w 0 clash.yaml)
+```
+
+完整调用示例：
+
+```bash
+CONFIG_B64=$(base64 -i clash.yaml | tr -d '\n')
+
+curl -X PATCH http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/proxy \
+  -H 'Content-Type: application/json' \
+  -d "{\"enabled\":true,\"type\":\"clash-verge\",\"mode\":\"rule\",\"configBase64\":\"$CONFIG_B64\"}"
+```
+
+`configBase64` 必须来自一整份合法 YAML 原文。不要把两份 YAML 拼接在一起；例如 `- MATCH,relay` 后面又直接接 `mode: rule`，会导致代理配置语义错误。
+Base64 长度通常比 YAML 原文更长，约等于 `4 * ceil(原文字节数 / 3)`，真实代理配置生成几 KB 到几十 KB 的单行字符串都正常。
+PATCH 代理配置也可以通过 `mode` 同时切换 Clash 顶层模式。后端会先解码 `configBase64`，再把 `mode` 写入 YAML 顶层；如果只传 `mode` 不传 `configBase64`，则只修改现有 `proxy/clash.yaml` 的顶层 `mode`。
+
 代理配置不是热更新。只要配置实际发生变化，就必须通过重建容器让配置生效。
-如果环境包正在 `running`，接口会自动 `forceRecreate` 重建容器，并返回 `restarted=true`，前端不需要再单独调用 `stop/run`。
+如果环境包正在 `running`，接口会先完成配置落盘和 hash 更新，然后立即返回 `restartQueued=true`；后端会在后台串行执行 `forceRecreate` 重建容器，前端不需要再单独调用 `stop/run`。
+这样 rule 模式下 CDP/timezone provider 即使耗时较长，也不会拖断本次 PATCH 请求。
+这里要特别注意：异步的是 `running` 环境的容器重建任务，不是 `rule` 模式本身。`rule/global/direct` 在 running 环境下都会快速返回并进入后台重建；区别只在后台 timezone probe 的入口不同，`rule` 走 CDP，`global/direct` 走容器内 curl/wget。
 如果环境包不是运行态，响应会返回 `restartRequired=true`，表示下一次 `run` 时生效。
 该接口会重算 `binding.identityHash` 并递增 `binding.version`，但不会删除 `browser-data/profile`。
+代理变化后 timezone 也必须重新确认。规则如下：
+
+```text
+running 环境：
+  PATCH proxy -> 写入新代理 -> 返回 restartQueued=true -> 后台 forceRecreate -> 容器内多源 timezone probe。
+  如果 timezone 成功，回写 timezone/hash；如果超时或失败，在详情 proxy.runtime 里保留 failed 记录。
+
+非 running 环境：
+  PATCH proxy -> 写入新代理 -> 标记下次 run 需要重新确认 timezone -> 返回 restartRequired=true。
+```
+
+容器内 timezone probe 的 provider 解析规则：
+
+```text
+ipwho.is:
+  timezone 取 response.timezone.id
+
+ip-api.com:
+  timezone 取 response.timezone，且 response.status 必须是 success
+
+ipapi.co:
+  timezone 取 response.timezone
+```
+
+成功条件不是 HTTP 200，而是请求成功、JSON 可解析、timezone 非空并且看起来是 IANA timezone，例如 `America/Los_Angeles`。
+
+切换代理模式示例：
+
+```bash
+curl -X PATCH http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/proxy-mode \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"global"}'
+```
+
+`proxy-mode` 独立接口继续保留，用于只切换模式、不提交整份代理配置的场景。它只修改 `proxy/clash.yaml` 顶层 `mode` 字段，支持：
+
+```text
+rule
+global
+direct
+```
+
+这个接口是代理配置修改能力，不是 `run` 参数。切换模式后会重算代理配置 hash 和 `binding.identityHash`，递增 `binding.version`，并把 timezone 标记为 pending。环境包正在 `running` 时会返回 `restartQueued=true`，由后台 `forceRecreate` 让模式变化和 timezone 重新探测生效。
 
 浏览器 VNC 示例：
 

@@ -16,7 +16,7 @@ var DB *sql.DB
 // Init 初始化边缘服务本地 SQLite 数据库。
 //
 // 设计来源：
-// - 用户确认 browser-envs 不能只靠扫描文件夹，因为后续需要假删除、容器状态、监控状态和服务端上报；
+// - 用户确认 browser-envs 不能只靠扫描文件夹，因为后续需要容器状态、监控状态和服务端上报；
 // - SQLite 在当前阶段只作为本机边缘服务索引库，不承担中心用户、节点归属、JWT 等服务端职责；
 // - 数据库文件放在项目 data 目录下，和环境包目录同级，便于本机部署、备份和排障。
 //
@@ -83,12 +83,12 @@ func Close() error {
 // - monitor_status / last_error：后续本机监控与上报使用，不在创建环境包时伪造运行状态；
 // - fingerprint_restored：指纹是否已注入到运行态容器，不等同于是否存在指纹备份；
 // - has_browser_data：browser-data/profile 目录是否已建立，用于快速判断环境包结构是否完整；
-// - *_at：生命周期时间戳，deleted_at 非空代表假删除，不应直接删除登录态目录。
+// - *_at：生命周期时间戳，deleted_at 保留给历史假删除/归档兼容；当前 DELETE 已调整为物理删除目录并移除索引。
 //
 // 维护原则：
 // - 这张表只做本机环境包索引和状态，不保存敏感大字段；
 // - 新增状态字段时要同步更新 project.md、OpenAPI 和 Service 写入逻辑；
-// - 不要用物理删除代替 deleted_at，除非用户明确执行清理登录态的高风险操作。
+// - 物理删除只能走 DELETE /browser-envs/:envId，并必须先做运行态和 env_path 安全校验。
 func migrate() error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS browser_envs (

@@ -138,9 +138,11 @@ func buildBindingFile(ctx *createContext) model.BindingFile {
 			RuntimeConfigPath: ctx.Paths.FingerprintRuntimeConfig,
 			Restored:          false,
 		},
-		RuntimeProtection: model.RuntimeProtection{},
-		CreatedAt:         ctx.Now,
-		UpdatedAt:         ctx.Now,
+		RuntimeProtection: model.RuntimeProtection{
+			TimezoneStatus: "pending",
+		},
+		CreatedAt: ctx.Now,
+		UpdatedAt: ctx.Now,
 	}
 }
 
@@ -213,7 +215,10 @@ func buildFingerprintFiles(param *model.CreateBrowserEnvRequest, paths model.Man
 }
 
 func buildProxyRuntimeFile() model.ProxyRuntimeFile {
+	source := "container-probe"
 	return model.ProxyRuntimeFile{
-		Drift: false,
+		Source: &source,
+		Status: "pending",
+		Drift:  false,
 	}
 }

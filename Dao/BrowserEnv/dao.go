@@ -24,7 +24,7 @@ type CreateModelHandler struct {
 // ListModelHandler 是查询环境包索引列表的 Dao 业务动作入口。
 //
 // 它和 CreateModelHandler 分开，是为了让“创建”和“查询”两个动作在调用处一眼可见；
-// 后续软删除、状态刷新也应各自按业务动作命名，不要把所有方法塞进一个含义模糊的 Dao。
+// 删除、状态刷新也应各自按业务动作命名，不要把所有方法塞进一个含义模糊的 Dao。
 type ListModelHandler struct {
 	repo *repository.Repository
 }
@@ -42,6 +42,14 @@ type RuntimeModelHandler struct {
 // proxy/runtime/environment 这类修改最终会写文件，但 SQLite 索引仍需要同步状态和更新时间；
 // 单独建 Handler 是为了避免把配置写入动作继续塞进 RuntimeModelHandler，保持调用语义清楚。
 type ConfigModelHandler struct {
+	repo *repository.Repository
+}
+
+// DeleteModelHandler 是环境包彻底删除动作的 Dao 入口。
+//
+// 删除动作会由 Service 先校验运行态和文件路径，再删除环境包目录；
+// Dao 只负责最终移除 browser_envs 索引记录，不触碰文件系统。
+type DeleteModelHandler struct {
 	repo *repository.Repository
 }
 
@@ -85,6 +93,13 @@ func NewRuntimeModelHandler() *RuntimeModelHandler {
 // NewConfigModelHandler 创建环境包配置修改 Dao。
 func NewConfigModelHandler() *ConfigModelHandler {
 	return &ConfigModelHandler{
+		repo: repository.NewRepository(),
+	}
+}
+
+// NewDeleteModelHandler 创建环境包删除 Dao。
+func NewDeleteModelHandler() *DeleteModelHandler {
+	return &DeleteModelHandler{
 		repo: repository.NewRepository(),
 	}
 }
@@ -175,6 +190,26 @@ func (h *ConfigModelHandler) UpdateBrowserEnvConfig(ctx context.Context, update 
 		return errors.New("browser env dao 未初始化")
 	}
 	return h.repo.UpdateBrowserEnvConfig(ctx, update)
+}
+
+// GetBrowserEnvIndexByID 按 envId 获取环境包索引。
+//
+// delete 必须先查索引状态，确认环境包存在且没有运行中容器，再进入物理删除流程。
+func (h *DeleteModelHandler) GetBrowserEnvIndexByID(ctx context.Context, envID string) (*model.BrowserEnvIndex, error) {
+	if h == nil || h.repo == nil {
+		return nil, errors.New("browser env dao 未初始化")
+	}
+	return h.repo.GetBrowserEnvIndexByID(ctx, envID)
+}
+
+// DeleteBrowserEnvIndex 删除环境包索引记录。
+//
+// Dao 只表达“删除索引”这个业务动作名；具体 SQL 和 RowsAffected 判断交给 Repository。
+func (h *DeleteModelHandler) DeleteBrowserEnvIndex(ctx context.Context, envID string) error {
+	if h == nil || h.repo == nil {
+		return errors.New("browser env dao 未初始化")
+	}
+	return h.repo.DeleteBrowserEnvIndex(ctx, envID)
 }
 
 // ListStatusSyncTargets 查询后台状态同步任务需要扫描的环境包。

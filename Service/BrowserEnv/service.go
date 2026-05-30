@@ -58,7 +58,7 @@ type createContext struct {
 //
 // 职责边界：
 // - 负责参数校验、默认值、envId/snowflake/envSequence 生成、hash 计算和文件落盘；
-// - 负责把环境包元数据写入 browser_envs 索引表，便于列表查询、假删除和后续监控；
+// - 负责把环境包元数据写入 browser_envs 索引表，便于列表查询、生命周期状态和后续监控；
 // - 不负责 Docker create/start，不检查端口占用，不写 manifest.lastRuntime；
 // - 写入失败时会清理本次新建的环境包目录，避免留下半成品。
 func (s *Service) CreateBrowserEnv(param *model.CreateBrowserEnvRequest) (*model.CreateBrowserEnvResponse, error) {
@@ -107,7 +107,7 @@ func (s *Service) CreateBrowserEnv(param *model.CreateBrowserEnvRequest) (*model
 // 设计来源：
 // - 用户要求边缘服务能直接返回当前管理了多少配置文件；
 // - 现在 browser_envs 已作为本机索引表，列表接口应查询 SQLite，而不是每次扫描目录；
-// - 默认排除 deleted，保留后续假删除、回收站和状态监控的扩展空间。
+// - 默认排除 deleted，用于兼容历史假删除/归档状态；当前 DELETE 会直接物理删除环境包和索引。
 //
 // 职责边界：
 // - 负责参数归一化、调用 Dao 查询列表和统计、组装响应；
@@ -181,7 +181,7 @@ func attachRunningVNCLinks(items []*model.BrowserEnvIndex, httpBase string, wsBa
 // buildBrowserEnvIndex 把已成功生成的环境包信息整理成数据库索引记录。
 //
 // 设计来源：
-// - 文件系统保存完整环境包，SQLite 只保存可查询、可假删除、可监控的轻量元数据；
+// - 文件系统保存完整环境包，SQLite 只保存可查询、可监控的轻量元数据；
 // - 创建阶段还没有真正启动 Docker，因此 container_status/monitor_status 不能伪造为 running；
 // - fingerprint_restored 表示“已注入运行态容器”，不是“有备份文件”，所以创建时固定为 false。
 func buildBrowserEnvIndex(ctx *createContext, files envPackageFiles) *model.BrowserEnvIndex {
@@ -220,16 +220,13 @@ func newCreateContext(param *model.CreateBrowserEnvRequest) (*createContext, err
 	}
 
 	ctx := &createContext{
-		Param:       param,
-		Now:         now,
-		SnowflakeID: snowflakeID,
-		EnvID:       envID,
-		BindingID:   fmt.Sprintf("binding-%s-%s-%s", param.UserID, param.RPAType, snowflakeID),
-		EnvSequence: envSequence,
-		Ports: model.BrowserEnvPorts{
-			CDP: 8100 + envSequence,
-			VNC: 9100 + envSequence,
-		},
+		Param:           param,
+		Now:             now,
+		SnowflakeID:     snowflakeID,
+		EnvID:           envID,
+		BindingID:       fmt.Sprintf("binding-%s-%s-%s", param.UserID, param.RPAType, snowflakeID),
+		EnvSequence:     envSequence,
+		Ports:           buildPorts(envSequence),
 		Paths:           paths,
 		RelativeEnvPath: filepath.ToSlash(filepath.Join("data", "browser-envs", "users", param.UserID, param.RPAType, envID)),
 	}
@@ -246,6 +243,17 @@ func newCreateContext(param *model.CreateBrowserEnvRequest) (*createContext, err
 	}
 	ctx.ConfigHash = ctx.IdentityHash
 	return ctx, nil
+}
+
+// buildPorts 根据本机 envSequence 生成 CDP/VNC 端口。
+//
+// 端口是本机运行资源，不属于账号身份；创建和导入都必须从同一规则生成，
+// 否则导入包可能带着旧机器端口覆盖本机已有环境。
+func buildPorts(envSequence int) model.BrowserEnvPorts {
+	return model.BrowserEnvPorts{
+		CDP: 8100 + envSequence,
+		VNC: 9100 + envSequence,
+	}
 }
 
 // buildBindingIdentity 组装参与 identityHash 的稳定身份字段。

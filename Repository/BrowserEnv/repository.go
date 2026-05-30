@@ -236,6 +236,33 @@ func (r *Repository) UpdateBrowserEnvConfig(ctx context.Context, update *model.B
 	return nil
 }
 
+// DeleteBrowserEnvIndex 删除 browser_envs 中的环境包索引记录。
+//
+// 设计来源：
+// - 用户确认 DELETE 是彻底删除，环境包目录删除后不应继续在 SQLite 列表里出现；
+// - Repository 只删除索引记录，不接触文件系统，文件路径校验和 RemoveAll 必须留在 Service 层；
+// - RowsAffected 继续归一化成 ErrBrowserEnvNotFound，方便上层返回稳定业务语义。
+func (r *Repository) DeleteBrowserEnvIndex(ctx context.Context, envID string) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("sqlite 未初始化")
+	}
+	if strings.TrimSpace(envID) == "" {
+		return fmt.Errorf("env_id 不能为空")
+	}
+	result, err := r.db.ExecContext(ctx, `DELETE FROM browser_envs WHERE env_id = ?`, envID)
+	if err != nil {
+		return fmt.Errorf("delete browser_envs failed: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read browser_envs delete rows affected failed: %w", err)
+	}
+	if affected == 0 {
+		return ErrBrowserEnvNotFound
+	}
+	return nil
+}
+
 // ListBrowserEnvIndexes 分页查询本机环境包索引列表。
 //
 // 职责边界：
@@ -298,7 +325,7 @@ func (r *Repository) ListBrowserEnvIndexes(ctx context.Context, query model.List
 // ListBrowserEnvStatusSyncTargets 查询后台状态同步任务需要扫描的环境包。
 //
 // 设计来源：
-// - 状态同步任务要定期修正 SQLite 中的运行态，但不应处理已假删除或归档的环境包；
+// - 状态同步任务要定期修正 SQLite 中的运行态，但不应处理历史 deleted 或归档的环境包；
 // - 这里不复用分页列表接口，是为了避免同步任务受 page/pageSize 影响漏扫；
 // - Repository 只负责 SQL 过滤和扫描，不访问 Docker、不读取环境包文件。
 func (r *Repository) ListBrowserEnvStatusSyncTargets(ctx context.Context) ([]*model.BrowserEnvIndex, error) {
@@ -417,8 +444,8 @@ func (r *Repository) countBrowserEnvGroup(ctx context.Context, query model.ListB
 
 // buildBrowserEnvWhere 统一生成列表和统计的过滤条件。
 //
-// 默认 status 为空时排除 deleted，这是用户确认的“假删除”展示规则；
-// 如果显式传 status=deleted，则进入回收站视图，不再额外排除。
+// 默认 status 为空时排除 deleted，这是为了兼容历史 deleted/归档记录；
+// 当前 DELETE 是物理删除目录和索引，正常流程里不应再依赖 deleted 作为主删除结果。
 func buildBrowserEnvWhere(query model.ListBrowserEnvQuery) (string, []any) {
 	conditions := make([]string, 0, 4)
 	args := make([]any, 0, 4)

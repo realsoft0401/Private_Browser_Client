@@ -26,7 +26,7 @@ type Service struct {
 // Docker API 地址来自 Settings，而不是从数据库里的节点列表读取。
 func NewEdgeService() *Service {
 	return &Service{
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		httpClient: &http.Client{Timeout: 45 * time.Second},
 	}
 }
 
@@ -299,6 +299,63 @@ func (s *Service) RemoveDockerContainer(containerID string, force bool) error {
 		return fmt.Errorf("docker api remove container failed: %w", err)
 	}
 	return nil
+}
+
+// ExecDockerContainer 在本机 Docker 容器内执行受控命令。
+//
+// 设计来源：
+// - timezone / 出口 IP 必须在浏览器容器内探测，Go 边缘服务宿主机直连会得到错误出口；
+// - 当前方法只给内部 Service 使用，不注册 HTTP 路由，不向前端开放任意命令执行能力；
+// - Tty=true 是为了让 Docker API 返回普通 stdout/stderr，避免处理 multiplexed stream。
+func (s *Service) ExecDockerContainer(containerID string, cmd []string) (*edgeModel.DockerContainerExecResult, error) {
+	id := strings.TrimSpace(containerID)
+	if id == "" {
+		return nil, fmt.Errorf("container id 不能为空")
+	}
+	if len(cmd) == 0 {
+		return nil, fmt.Errorf("exec cmd 不能为空")
+	}
+	createConfig := edgeModel.DockerContainerExecCreateConfig{
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          true,
+		Cmd:          cmd,
+	}
+	createBody, err := json.Marshal(createConfig)
+	if err != nil {
+		return nil, err
+	}
+	createResult := new(edgeModel.DockerContainerExecCreateResult)
+	if err = s.fetchDockerJSON(http.MethodPost, "/containers/"+url.PathEscape(id)+"/exec", bytes.NewReader(createBody), createResult); err != nil {
+		return nil, fmt.Errorf("docker api exec create failed: %w", err)
+	}
+	if strings.TrimSpace(createResult.ID) == "" {
+		return nil, fmt.Errorf("docker api exec id 为空")
+	}
+
+	startConfig := edgeModel.DockerContainerExecStartConfig{Detach: false, Tty: true}
+	startBody, err := json.Marshal(startConfig)
+	if err != nil {
+		return nil, err
+	}
+	outputBytes, err := s.fetchDockerRaw(http.MethodPost, "/exec/"+url.PathEscape(createResult.ID)+"/start", bytes.NewReader(startBody))
+	if err != nil {
+		return nil, fmt.Errorf("docker api exec start failed: %w", err)
+	}
+
+	inspect := new(edgeModel.DockerContainerExecInspectResult)
+	if err = s.fetchDockerJSON(http.MethodGet, "/exec/"+url.PathEscape(createResult.ID)+"/json", nil, inspect); err != nil {
+		return nil, fmt.Errorf("docker api exec inspect failed: %w", err)
+	}
+	exitCode := 0
+	if inspect.ExitCode != nil {
+		exitCode = *inspect.ExitCode
+	}
+	return &edgeModel.DockerContainerExecResult{
+		ExecID:   createResult.ID,
+		Output:   string(outputBytes),
+		ExitCode: exitCode,
+	}, nil
 }
 
 // probeDockerEngine 是边缘服务访问 Docker Engine API 的统一入口。
@@ -642,6 +699,46 @@ func (s *Service) fetchDockerAction(method, path string, body io.Reader) (int, e
 		return resp.StatusCode, buildDockerAPIError(resp.StatusCode, bodyBytes)
 	}
 	return resp.StatusCode, nil
+}
+
+// fetchDockerJSON 使用当前 Docker API 地址请求并解析 JSON。
+//
+// 与 fetchJSON 的区别是这里自动读取 Settings 中的本机 Docker API，供 Docker exec 等内部方法复用。
+func (s *Service) fetchDockerJSON(method, path string, body io.Reader, target any) error {
+	dockerAPIURL := currentDockerAPIURL()
+	if dockerAPIURL == "" {
+		return fmt.Errorf("docker api url 不能为空")
+	}
+	return s.fetchJSON(dockerAPIURL, method, path, body, target)
+}
+
+// fetchDockerRaw 读取 Docker API 原始响应体。
+//
+// Docker exec start 返回的是命令输出流，不是 JSON；这里只做 HTTP 状态和错误处理，不解释内容。
+func (s *Service) fetchDockerRaw(method, path string, body io.Reader) ([]byte, error) {
+	dockerAPIURL := currentDockerAPIURL()
+	if dockerAPIURL == "" {
+		return nil, fmt.Errorf("docker api url 不能为空")
+	}
+	endpoint := fmt.Sprintf("%s%s", strings.TrimRight(dockerAPIURL, "/"), path)
+	req, err := http.NewRequest(method, endpoint, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request docker api failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, buildDockerAPIError(resp.StatusCode, bodyBytes)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 }
 
 // fetchJSON 封装访问 Docker Engine API 的公共逻辑。
