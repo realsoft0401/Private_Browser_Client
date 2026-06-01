@@ -210,13 +210,15 @@ func enqueueProxyRecreate(envID string, taskType string) *TaskService.EdgeTask {
 // ensureProxyUpdateStatus 判断当前状态是否允许修改代理配置。
 //
 // running 允许进入配置修改，但必须由 UpdateBrowserEnvProxy 自己完成 forceRecreate；
-// deleted/archived 不允许修改，是为了避免回收站或归档数据重新变成活跃环境。
+// deleted/archived/backed_up 不允许修改，是为了避免回收站或只有备份包的资产重新变成半活跃环境。
 func ensureProxyUpdateStatus(status string) error {
 	switch status {
 	case model.BrowserEnvStatusCreated, model.BrowserEnvStatusStopped, model.BrowserEnvStatusError, model.BrowserEnvStatusRunning:
 		return nil
 	case model.BrowserEnvStatusDeleted:
 		return conflictError("环境包已删除，不能修改配置")
+	case model.BrowserEnvStatusBackedUp:
+		return conflictError("环境包当前只有备份包，请先 restore 后再修改配置")
 	case model.BrowserEnvStatusArchived:
 		return conflictError("环境包已归档，不能修改配置")
 	default:

@@ -59,6 +59,12 @@ func (r *Repository) InsertBrowserEnvIndex(ctx context.Context, record *model.Br
 		container_status,
 		monitor_status,
 		last_error,
+		backup_path,
+		backup_checksum,
+		backup_size,
+		backup_at,
+		backup_version,
+		last_restored_at,
 		fingerprint_restored,
 		has_browser_data,
 		created_at,
@@ -67,7 +73,7 @@ func (r *Repository) InsertBrowserEnvIndex(ctx context.Context, record *model.Br
 		last_started_at,
 		last_stopped_at,
 		last_checked_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.EnvID,
 		record.UserID,
 		record.RPAType,
@@ -82,6 +88,12 @@ func (r *Repository) InsertBrowserEnvIndex(ctx context.Context, record *model.Br
 		record.ContainerStatus,
 		record.MonitorStatus,
 		record.LastError,
+		record.BackupPath,
+		record.BackupChecksum,
+		record.BackupSize,
+		record.BackupAt,
+		record.BackupVersion,
+		record.LastRestoredAt,
 		boolToSQLiteInt(record.FingerprintRestored),
 		boolToSQLiteInt(record.HasBrowserData),
 		record.CreatedAt,
@@ -124,6 +136,12 @@ func (r *Repository) GetBrowserEnvIndexByID(ctx context.Context, envID string) (
 		container_status,
 		monitor_status,
 		last_error,
+		backup_path,
+		backup_checksum,
+		backup_size,
+		backup_at,
+		backup_version,
+		last_restored_at,
 		fingerprint_restored,
 		has_browser_data,
 		created_at,
@@ -236,6 +254,62 @@ func (r *Repository) UpdateBrowserEnvConfig(ctx context.Context, update *model.B
 	return nil
 }
 
+// UpdateBrowserEnvBackupState 更新备份/恢复后的环境资产状态。
+//
+// 设计来源：
+// - 备份后会删除 browser-envs 源目录，但这不是用户删除环境资产；
+// - SQLite 必须保留 envId 和备份包路径，供列表展示、下载和 restore 使用；
+// - Repository 只更新索引字段，不判断备份包是否存在，不删除 Docker 容器或目录。
+func (r *Repository) UpdateBrowserEnvBackupState(ctx context.Context, update *model.BrowserEnvBackupStateUpdate) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("sqlite 未初始化")
+	}
+	if update == nil {
+		return fmt.Errorf("backup state update 不能为空")
+	}
+	result, err := r.db.ExecContext(ctx, `UPDATE browser_envs SET
+		status = ?,
+		container_id = ?,
+		container_status = ?,
+		monitor_status = ?,
+		last_error = ?,
+		has_browser_data = ?,
+		backup_path = ?,
+		backup_checksum = ?,
+		backup_size = ?,
+		backup_at = ?,
+		backup_version = ?,
+		last_restored_at = ?,
+		updated_at = ?
+		WHERE env_id = ?`,
+		update.Status,
+		update.ContainerID,
+		update.ContainerStatus,
+		update.MonitorStatus,
+		update.LastError,
+		boolToSQLiteInt(update.HasBrowserData),
+		update.BackupPath,
+		update.BackupChecksum,
+		update.BackupSize,
+		update.BackupAt,
+		update.BackupVersion,
+		update.LastRestoredAt,
+		update.UpdatedAt,
+		update.EnvID,
+	)
+	if err != nil {
+		return fmt.Errorf("update browser_envs backup state failed: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read browser_envs backup state rows affected failed: %w", err)
+	}
+	if affected == 0 {
+		return ErrBrowserEnvNotFound
+	}
+	return nil
+}
+
 // DeleteBrowserEnvIndex 删除 browser_envs 中的环境包索引记录。
 //
 // 设计来源：
@@ -292,6 +366,12 @@ func (r *Repository) ListBrowserEnvIndexes(ctx context.Context, query model.List
 		container_status,
 		monitor_status,
 		last_error,
+		backup_path,
+		backup_checksum,
+		backup_size,
+		backup_at,
+		backup_version,
+		last_restored_at,
 		fingerprint_restored,
 		has_browser_data,
 		created_at,
@@ -347,6 +427,12 @@ func (r *Repository) ListBrowserEnvStatusSyncTargets(ctx context.Context) ([]*mo
 		container_status,
 		monitor_status,
 		last_error,
+		backup_path,
+		backup_checksum,
+		backup_size,
+		backup_at,
+		backup_version,
+		last_restored_at,
 		fingerprint_restored,
 		has_browser_data,
 		created_at,
@@ -356,10 +442,11 @@ func (r *Repository) ListBrowserEnvStatusSyncTargets(ctx context.Context) ([]*mo
 		last_stopped_at,
 		last_checked_at
 		FROM browser_envs
-		WHERE status != ? AND status != ?
+		WHERE status != ? AND status != ? AND status != ?
 		ORDER BY env_sequence ASC`,
 		model.BrowserEnvStatusDeleted,
 		model.BrowserEnvStatusArchived,
+		model.BrowserEnvStatusBackedUp,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query browser_envs status sync targets failed: %w", err)
@@ -478,6 +565,12 @@ func scanBrowserEnvIndex(rows *sql.Rows) (*model.BrowserEnvIndex, error) {
 	var containerID sql.NullString
 	var containerName sql.NullString
 	var lastError sql.NullString
+	var backupPath sql.NullString
+	var backupChecksum sql.NullString
+	var backupSize sql.NullInt64
+	var backupAt sql.NullInt64
+	var backupVersion sql.NullInt64
+	var lastRestoredAt sql.NullInt64
 	var fingerprintRestored int
 	var hasBrowserData int
 	var deletedAt sql.NullInt64
@@ -500,6 +593,12 @@ func scanBrowserEnvIndex(rows *sql.Rows) (*model.BrowserEnvIndex, error) {
 		&item.ContainerStatus,
 		&item.MonitorStatus,
 		&lastError,
+		&backupPath,
+		&backupChecksum,
+		&backupSize,
+		&backupAt,
+		&backupVersion,
+		&lastRestoredAt,
 		&fingerprintRestored,
 		&hasBrowserData,
 		&item.CreatedAt,
@@ -514,6 +613,12 @@ func scanBrowserEnvIndex(rows *sql.Rows) (*model.BrowserEnvIndex, error) {
 	item.ContainerID = nullableStringPtr(containerID)
 	item.ContainerName = nullableStringPtr(containerName)
 	item.LastError = nullableStringPtr(lastError)
+	item.BackupPath = nullableStringPtr(backupPath)
+	item.BackupChecksum = nullableStringPtr(backupChecksum)
+	item.BackupSize = nullableInt64Ptr(backupSize)
+	item.BackupAt = nullableInt64Ptr(backupAt)
+	item.BackupVersion = nullableIntPtr(backupVersion)
+	item.LastRestoredAt = nullableInt64Ptr(lastRestoredAt)
 	item.FingerprintRestored = fingerprintRestored == 1
 	item.HasBrowserData = hasBrowserData == 1
 	item.DeletedAt = nullableInt64Ptr(deletedAt)
@@ -551,4 +656,16 @@ func nullableInt64Ptr(value sql.NullInt64) *int64 {
 		return nil
 	}
 	return &value.Int64
+}
+
+// nullableIntPtr 把 SQLite INTEGER 归一成 *int。
+//
+// backup_version 属于协议小整数；数据库读取仍以 NullInt64 承接，
+// 在 Repository 层完成转换，避免 Service 关心 SQLite 的整数扫描类型。
+func nullableIntPtr(value sql.NullInt64) *int {
+	if !value.Valid {
+		return nil
+	}
+	converted := int(value.Int64)
+	return &converted
 }

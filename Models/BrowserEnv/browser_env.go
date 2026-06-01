@@ -28,6 +28,13 @@ const (
 	BrowserEnvStatusRunning = "running"
 	// BrowserEnvStatusStopped 表示最近一次容器已经停止。
 	BrowserEnvStatusStopped = "stopped"
+	// BrowserEnvStatusBackedUp 表示环境包已经备份为 tar.gz，运行目录和容器已释放。
+	//
+	// 设计来源：
+	// - 用户确认 RPA 执行后只保留备份文件，下一次执行前再恢复环境包；
+	// - 因此 SQLite 记录不能删除，而要从“可运行目录索引”变成“环境资产索引”；
+	// - 处于该状态时不能直接 run，必须先 restore 把 browser-envs 目录恢复出来。
+	BrowserEnvStatusBackedUp = "backed_up"
 	// BrowserEnvStatusDeleted 表示逻辑删除，不应再作为正常列表展示。
 	BrowserEnvStatusDeleted = "deleted"
 	// BrowserEnvStatusArchived 表示已归档，可保留文件但不参与活跃列表。
@@ -293,6 +300,39 @@ type ImportBrowserEnvPackageResponse struct {
 	ImportedAt  int64           `json:"importedAt"`
 }
 
+// BackupBrowserEnvResponse 是备份环境包后的资产状态摘要。
+//
+// 设计来源：
+// - 新的备份不再是“打包并下载”，而是状态变化动作；
+// - 备份成功后会删除 Docker 容器和 browser-envs 源目录，但 SQLite 索引必须保留；
+// - 前端依靠这些字段展示“已备份、可恢复、可下载”的环境资产。
+type BackupBrowserEnvResponse struct {
+	EnvID          string `json:"envId"`
+	UserID         string `json:"userId"`
+	RPAType        string `json:"rpaType"`
+	Status         string `json:"status"`
+	BackupPath     string `json:"backupPath"`
+	BackupChecksum string `json:"backupChecksum"`
+	BackupSize     int64  `json:"backupSize"`
+	BackupAt       int64  `json:"backupAt"`
+	Message        string `json:"message"`
+}
+
+// RestoreBrowserEnvResponse 是从本机备份包恢复环境目录后的摘要。
+//
+// restore 不启动 Docker，只把备份包恢复为可运行环境包，并把容器运行态重置为 created。
+// 后续 run 会重新创建容器并再次执行 timezone 探测。
+type RestoreBrowserEnvResponse struct {
+	EnvID      string          `json:"envId"`
+	UserID     string          `json:"userId"`
+	RPAType    string          `json:"rpaType"`
+	Status     string          `json:"status"`
+	Ports      BrowserEnvPorts `json:"ports"`
+	EnvPath    string          `json:"envPath"`
+	RestoredAt int64           `json:"restoredAt"`
+	Message    string          `json:"message"`
+}
+
 // BrowserEnvVNCInfoResponse 是浏览器版 VNC 连接信息。
 //
 // 设计来源：
@@ -551,6 +591,29 @@ type BrowserEnvConfigUpdate struct {
 	UpdatedAt int64
 }
 
+// BrowserEnvBackupStateUpdate 是备份/恢复流程写回 SQLite 资产状态的模型。
+//
+// 设计来源：
+// - 备份后环境目录会被删除，但这不是用户删除环境资产；
+// - SQLite 需要保留 envId、备份包路径和恢复入口，所以不能复用 DeleteBrowserEnvIndex；
+// - Repository 只按这些字段落库，不读取备份包，也不删除文件。
+type BrowserEnvBackupStateUpdate struct {
+	EnvID           string
+	Status          string
+	ContainerID     *string
+	ContainerStatus string
+	MonitorStatus   string
+	LastError       *string
+	HasBrowserData  bool
+	BackupPath      *string
+	BackupChecksum  *string
+	BackupSize      *int64
+	BackupAt        *int64
+	BackupVersion   *int
+	LastRestoredAt  *int64
+	UpdatedAt       int64
+}
+
 // BrowserEnvIndex 是 browser_envs 表的索引型元数据模型。
 //
 // 设计来源：
@@ -603,6 +666,21 @@ type BrowserEnvIndex struct {
 	MonitorStatus string `json:"monitorStatus"`
 	// LastError 保存最近一次可读错误，方便前端展示和排障。
 	LastError *string `json:"lastError,omitempty"`
+	// BackupPath 保存本机备份包相对路径。
+	//
+	// 该字段只指向受控 data/browser-envs/users/{userId}/{rpaType}/ 下的 tar.gz，
+	// 不保存外部任意路径，避免下载/恢复接口被扩展成任意文件读取入口。
+	BackupPath *string `json:"backupPath,omitempty"`
+	// BackupChecksum 保存备份包文件 sha256，用于恢复前确认包没有被替换或损坏。
+	BackupChecksum *string `json:"backupChecksum,omitempty"`
+	// BackupSize 保存备份包大小，供前端展示和排障。
+	BackupSize *int64 `json:"backupSize,omitempty"`
+	// BackupAt 保存最近一次备份完成时间。
+	BackupAt *int64 `json:"backupAt,omitempty"`
+	// BackupVersion 保存备份包协议版本。
+	BackupVersion *int `json:"backupVersion,omitempty"`
+	// LastRestoredAt 保存最近一次从备份恢复环境目录的时间。
+	LastRestoredAt *int64 `json:"lastRestoredAt,omitempty"`
 	// FingerprintRestored 表示是否已经把指纹注入运行态容器。
 	FingerprintRestored bool `json:"fingerprintRestored"`
 	// HasBrowserData 表示 browser-data/profile 目录是否已建立。

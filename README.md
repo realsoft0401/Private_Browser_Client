@@ -113,8 +113,9 @@ main.go
 | GET | `/api/v1/edge/browser-envs/:envId` | 查询单个环境包详情，不返回代理明文和指纹 raw |
 | POST | `/api/v1/edge/browser-envs/:envId/run` | SSE 任务：按环境包创建或启动本机浏览器容器 |
 | POST | `/api/v1/edge/browser-envs/:envId/stop` | SSE 任务：按环境包停止本机浏览器容器，并同步运行态 |
-| POST | `/api/v1/edge/browser-envs/:envId/backup-package` | 非 SSE：备份环境包为 tar.gz 下载流，不删除本机环境包 |
-| POST | `/api/v1/edge/browser-envs/:envId/export-and-remove` | 非 SSE：导出环境包为 tar.gz 后删除本机源环境包和索引 |
+| POST | `/api/v1/edge/browser-envs/:envId/backup` | 备份环境包：生成 tar.gz 后删除本机容器和环境目录，SQLite 索引保留为 `backed_up` |
+| POST | `/api/v1/edge/browser-envs/:envId/restore` | 从本机备份包恢复环境目录，恢复后可继续 run |
+| POST | `/api/v1/edge/browser-envs/:envId/export-and-remove` | 历史导出并移除接口，后续由“备份 + 下载”流程替代 |
 | DELETE | `/api/v1/edge/browser-envs/:envId` | SSE 任务：彻底删除环境包，删除配置目录、登录态目录、已停止容器和 SQLite 索引 |
 | PATCH | `/api/v1/edge/browser-envs/:envId/proxy` | running 时返回 SSE 任务：修改环境包代理配置，变更后重建容器 |
 | PATCH | `/api/v1/edge/browser-envs/:envId/proxy-mode` | running 时返回 SSE 任务：切换 Clash 规则/全局/直连模式并自动重建 |
@@ -329,36 +330,127 @@ curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/stop \
 `stop` 接口围绕 envId 停止容器，并回写 `container.json`、`manifest.lastRuntime` 和 SQLite `browser_envs` 运行态。
 它不会删除容器、镜像或 `browser-data/profile` 登录态目录。
 
-备份浏览器环境包示例：
+### 环境包备份、下载与恢复流程
+
+最新流程里，核心能力重新定义为 `备份` 和 `下载`，不再把 `导出` 作为独立生命周期。原因是备份产物本身就是标准 `.tar.gz` 环境包，用户把这个包拿走时，它自然具备迁移能力；系统真正需要管理的是环境包是否还在本机可运行、是否已经只剩备份文件、以及下次 RPA 前如何恢复。
+
+新的原则是：
+
+```text
+备份是状态变化动作：封存当前最新环境，释放运行资源。
+下载不是状态变化动作：只是复制已有备份包给用户。
+SQLite 索引不是运行目录索引，而是环境资产索引；备份后不能直接删除。
+```
+
+备份后的本机状态应变成：
+
+```text
+Docker 容器：删除
+browser-envs 源环境目录：删除
+备份 tar.gz：保留在受控备份目录
+SQLite browser_envs 索引：保留，状态改为 backed_up/archived
+```
+
+SQLite 索引保留的原因很重要：前端仍然需要看到这个环境资产，用户也需要从列表里选择“恢复并运行”“下载备份包”“删除备份”。如果备份后直接删除索引，系统就失去了 envId、账号绑定、备份包路径、checksum、备份时间和后续恢复入口；用户下次执行 RPA 时只能手工上传文件，无法形成稳定的自动化生命周期。
+
+但索引保留并不代表环境仍可直接运行。后续代码必须避免保留“假的可运行索引”：当环境目录已经删除时，`status` 不能仍是 `created/stopped/running`，而应转为 `backed_up` 或 `archived`。这个状态下前端不能直接显示“启动”，只能显示“恢复”“恢复并运行”“下载备份包”“删除备份”。
+
+建议后续在索引里补充这些备份字段：
+
+```text
+status = backed_up / archived
+backupPath
+backupChecksum
+backupSize
+backupAt
+backupVersion
+lastRestoreAt
+lastRunAt
+```
+
+备份流程：
+
+```text
+停止环境包
+  -> 确认 Docker 容器不在 running
+  -> 复制当前环境包到 staging
+  -> 写入 backup metadata 和 checksums
+  -> 生成 tar.gz
+  -> 校验 tar.gz 可恢复
+  -> 把 tar.gz 放入受控备份目录
+  -> 删除关联的已停止 Docker 容器
+  -> 删除 browser-envs 下源环境目录
+  -> SQLite browser_envs 索引保留，状态改为 backed_up/archived
+  -> 写入 backupPath、checksum、size、backupAt
+```
+
+项目仍处于开发期，不保留旧的临时下载流接口，避免“备份”和“下载”语义混在一起。代码统一到“备份包”模型：每次 RPA 执行结束后备份当前最新状态，只保留备份文件和 SQLite 资产索引；下一次执行 RPA 时先恢复环境包，再启动容器。
+
+备份示例：
 
 ```bash
-curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/backup-package \
+curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/backup
+```
+
+当前实现会把备份包放在 `data/browser-envs/users/{userId}/{rpaType}/{envId}-backup.tar.gz`，并在包校验成功后删除源环境包目录和关联的已停止 Docker 容器。它不会删除浏览器镜像，也不会删除 SQLite 资产索引；索引会改为 `backed_up`，并记录备份包位置和校验信息。如果环境包仍在运行中，接口会返回状态冲突，调用方应先执行 `stop`。
+
+下载备份包不应该再叫导出。下载只是把已有备份文件复制给用户，不改变状态、不删除索引、不删除备份包、不影响后续恢复：
+
+```text
+backed_up/archived
+  -> download backup package
+  -> 状态仍然是 backed_up/archived
+```
+
+下载示例：
+
+```bash
+curl -X GET http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/backup/download \
   -o {envId}-backup.tar.gz
 ```
 
-备份接口会把环境包复制到 staging，补充导出元信息和 checksums 后生成 `.tar.gz` 下载流。
-它不会删除源环境包目录、Docker 容器、浏览器镜像或 SQLite 索引。
-如果环境包仍在运行中，接口会返回状态冲突，调用方应先执行 `stop`。
-
-导出并移除浏览器环境包示例：
+恢复示例：
 
 ```bash
-curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/export-and-remove \
-  -o {envId}-export.tar.gz
+curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/restore
 ```
 
-`export-and-remove` 使用和 `backup-package` 相同的 `.tar.gz` 包协议，但语义是迁移：下载包生成成功后，会删除关联的已停止 Docker 容器、源环境包目录和 SQLite 索引。
-它不会自动停止 running 容器，也不会删除浏览器镜像。
-如果环境包仍在运行中，接口会返回状态冲突，调用方应先执行 `stop`。
+`restore` 会从 SQLite 索引里的 `backupPath` 读取本机备份包，校验 checksum 后恢复 `browser-envs/{envId}` 目录，并把容器运行态重置为 `created`。它不会自动启动 Docker；恢复成功后再调用 `run` 执行 RPA。
+
+后续推荐接口命名：
+
+```text
+POST /api/v1/edge/browser-envs/{envId}/backup
+GET  /api/v1/edge/browser-envs/{envId}/backup/download
+POST /api/v1/edge/browser-envs/{envId}/restore
+```
+
+历史 `export-and-remove` 接口语义和“备份 + 下载”模型冲突，后续不应作为新前端主流程。兼容期内如果保留，也应该内部走备份模型：先生成/复用备份包，再返回下载；是否删除备份资产或索引必须由用户通过独立删除动作确认。
+
+这里需要特别注意下载类接口的删除时机：下载失败不应影响备份状态。后续更稳的实现方向是 artifact 两阶段：
+
+```text
+POST backup task
+  -> 后端生成并校验 artifact
+  -> 删除容器和源环境目录
+  -> SQLite 索引转为 backed_up/archived
+  -> 返回 artifactUrl
+
+GET artifactUrl
+  -> 下载 tar.gz
+  -> 不改变 backed_up/archived 状态
+```
+
+在 artifact 方案完成前，前端必须对备份做强提示：环境包包含登录态、代理凭据和指纹配置；备份后当前节点将不再保留可运行环境目录，后续需要使用时必须从备份恢复。
 
 导入浏览器环境包示例：
 
 ```bash
 curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/import-package \
-  -F "file=@{envId}-export.tar.gz"
+  -F "file=@{envId}-backup.tar.gz"
 ```
 
-`import-package` 只接受本服务 `backup-package` 或 `export-and-remove` 生成的标准 `.tar.gz` 包。
+`import-package` 只接受本服务备份生成的标准 `.tar.gz` 包，或者同格式的外部备份包。
 导入会校验单根目录、`manifest.json`、标准文件和 checksums；默认保留原 `envId`，如果本机已存在同名环境包会拒绝覆盖。
 导入到本机后会重新分配 `envSequence`、CDP/VNC 端口，并把容器运行态重置为 `created`；下一次 `run` 会重新在浏览器容器内探测 timezone。
 
@@ -454,15 +546,18 @@ DELETE /api/v1/edge/browser-envs/:envId
 
 `PATCH /api/v1/edge/browser-envs/:envId/proxy` 和 `PATCH /api/v1/edge/browser-envs/:envId/proxy-mode` 是条件任务化：只有环境包正在 `running` 且配置实际变化时，才会返回 `restartQueued=true + taskId + eventsUrl`；非运行态只标记下次 run 生效。
 
-备份、导出、导入暂时不是 SSE：
+备份、下载、导入当前仍是文件类接口，不应按普通同步接口长期保留：
 
 ```text
-POST /api/v1/edge/browser-envs/:envId/backup-package
-POST /api/v1/edge/browser-envs/:envId/export-and-remove
+POST /api/v1/edge/browser-envs/:envId/backup
+POST /api/v1/edge/browser-envs/:envId/restore
+GET  /api/v1/edge/browser-envs/:envId/backup/download   // 后续推荐
 POST /api/v1/edge/browser-envs/import-package
 ```
 
-原因是备份/导出当前直接返回 `application/gzip` 文件流，贸然改成 SSE 会改变下载语义。后续如果要任务化文件类接口，应先设计 `artifactUrl` 或临时下载凭据，再由 SSE 只负责报告打包进度。
+原因是备份生成包后会删除当前节点上的源环境包和已停止容器，但 SQLite 索引会保留为 `backed_up/archived` 资产状态。下载只读取已有备份包，不改变状态；导入/恢复再把备份包还原成可运行环境。
+
+后续实现应优先改成 artifact 任务模型：HTTP 请求只创建备份任务，SSE 负责报告打包、校验、删除容器、删除源环境目录、更新 SQLite 资产状态的进度，任务完成后返回 `artifactUrl` 或备份包下载地址。`import-package` 是上传恢复动作，可以先继续保持 multipart 同步接口；如果后续导入包变大或需要显示校验进度，再单独任务化。
 
 任务化接口响应示例：
 

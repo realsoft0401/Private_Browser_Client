@@ -90,6 +90,9 @@ func runBrowserEnvLocked(envID string, param *model.RunBrowserEnvRequest) (*mode
 	if index.Status == model.BrowserEnvStatusDeleted {
 		return nil, conflictError("环境包已删除，不能启动")
 	}
+	if index.Status == model.BrowserEnvStatusBackedUp || index.Status == model.BrowserEnvStatusArchived {
+		return nil, conflictError("环境包当前只有备份包，请先 restore 后再启动")
+	}
 
 	pkg, err := loadRunPackage(index)
 	if err != nil {

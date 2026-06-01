@@ -90,21 +90,29 @@ func StopBrowserEnv(c *gin.Context) {
 	HttpResponse.ResponseSuccess(c, TaskService.NewStartResponse(task, publicRequestBase(c)))
 }
 
-// BackupBrowserEnvPackage 生成环境包备份 tar.gz。
+// BackupBrowserEnv 执行“备份资产”动作。
 //
-// 备份接口只返回下载流，不删除源环境包、Docker 容器或 SQLite 索引；
-// Service 会拒绝 running 状态，避免 browser-data/profile 在写入过程中被打包。
-func BackupBrowserEnvPackage(c *gin.Context) {
-	result, err := NewService().BackupBrowserEnvPackage(c.Param("envId"))
+// Service 会生成本机 tar.gz 备份包，删除容器和源环境目录，并把 SQLite 索引改成 backed_up。
+// 这个项目仍处于开发期，不保留旧的临时打包下载接口，避免 backup 和 download 语义混乱。
+func BackupBrowserEnv(c *gin.Context) {
+	result, err := NewService().BackupBrowserEnv(c.Param("envId"))
 	if err != nil {
 		writeBrowserEnvError(c, err)
 		return
 	}
-	if result.Cleanup != nil {
-		defer result.Cleanup()
+	HttpResponse.ResponseSuccess(c, result)
+}
+
+// RestoreBrowserEnv 从 SQLite 记录的本机备份包恢复环境目录。
+//
+// restore 只恢复文件并重置容器运行态，不启动 Docker；前端需要继续调用 run 执行 RPA。
+func RestoreBrowserEnv(c *gin.Context) {
+	result, err := NewService().RestoreBrowserEnv(c.Param("envId"))
+	if err != nil {
+		writeBrowserEnvError(c, err)
+		return
 	}
-	c.Header("Content-Type", "application/gzip")
-	c.FileAttachment(result.FilePath, result.FileName)
+	HttpResponse.ResponseSuccess(c, result)
 }
 
 // ExportAndRemoveBrowserEnvPackage 导出环境包并从本机移除源环境。

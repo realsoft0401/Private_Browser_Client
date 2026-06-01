@@ -62,6 +62,9 @@ func (s *Service) StopBrowserEnv(envID string, param *model.StopBrowserEnvReques
 	if index.Status == model.BrowserEnvStatusDeleted {
 		return nil, conflictError("环境包已删除，不能停止")
 	}
+	if index.Status == model.BrowserEnvStatusBackedUp || index.Status == model.BrowserEnvStatusArchived {
+		return nil, conflictError("环境包当前只有备份包，没有可停止的本机容器")
+	}
 
 	pkg, err := loadLifecyclePackage(index)
 	if err != nil {

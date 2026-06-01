@@ -181,6 +181,17 @@ func (h *RuntimeModelHandler) UpdateBrowserEnvRuntime(ctx context.Context, updat
 	return h.repo.UpdateBrowserEnvRuntime(ctx, update)
 }
 
+// UpdateBrowserEnvBackupState 更新备份/恢复后的环境资产状态。
+//
+// 备份会删除运行目录但保留 SQLite 资产索引；这个 Dao 方法把 Service 已确认的
+// backupPath/checksum/status 等字段交给 Repository，不直接处理文件或 Docker。
+func (h *RuntimeModelHandler) UpdateBrowserEnvBackupState(ctx context.Context, update *model.BrowserEnvBackupStateUpdate) error {
+	if h == nil || h.repo == nil {
+		return errors.New("browser env dao 未初始化")
+	}
+	return h.repo.UpdateBrowserEnvBackupState(ctx, update)
+}
+
 // UpdateBrowserEnvConfig 同步配置修改后的 browser_envs 索引状态。
 //
 // Dao 只保留“配置更新”这个业务动作名，不直接拼 SQL；

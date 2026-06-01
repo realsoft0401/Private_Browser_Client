@@ -24,7 +24,7 @@ import (
 // - 复用备份包协议生成 tar.gz 下载包，但 manifest.exportAction 写 export-and-remove；
 // - 不自动停止运行中容器，不删除 Docker 镜像；
 // - 只有 archive 已成功生成后才进入删除流程，避免导出失败时误删源数据。
-func (s *Service) ExportAndRemoveBrowserEnvPackage(envID string) (*BackupBrowserEnvPackageResult, error) {
+func (s *Service) ExportAndRemoveBrowserEnvPackage(envID string) (*PackageArchiveResult, error) {
 	envID = strings.TrimSpace(envID)
 	if envID == "" {
 		return nil, invalidError("envId 不能为空")
@@ -41,7 +41,7 @@ func (s *Service) ExportAndRemoveBrowserEnvPackage(envID string) (*BackupBrowser
 		}
 		return nil, internalError(err.Error())
 	}
-	if index.Status == model.BrowserEnvStatusDeleted || index.Status == model.BrowserEnvStatusArchived {
+	if index.Status == model.BrowserEnvStatusDeleted || index.Status == model.BrowserEnvStatusArchived || index.Status == model.BrowserEnvStatusBackedUp {
 		return nil, conflictError("环境包已删除或归档，不能导出")
 	}
 	if index.Status == model.BrowserEnvStatusRunning || index.ContainerStatus == model.BrowserEnvStatusRunning {
@@ -94,7 +94,7 @@ func buildExportArchiveFileName(envID string, timestamp int64) string {
 //
 // backup 和 export-and-remove 都走这个 helper，保证两类下载包只有 exportAction 不同，
 // 不会出现“备份包能导入、导出包不能导入”的协议分裂。
-func buildPackageArchive(index *model.BrowserEnvIndex, sourceEnvPath string, manifest model.ManifestFile, exportAction string, fileNameBuilder func(string, int64) string) (*BackupBrowserEnvPackageResult, error) {
+func buildPackageArchive(index *model.BrowserEnvIndex, sourceEnvPath string, manifest model.ManifestFile, exportAction string, fileNameBuilder func(string, int64) string) (*PackageArchiveResult, error) {
 	stagingRoot, err := os.MkdirTemp("", "private-browser-package-*")
 	if err != nil {
 		return nil, internalError(fmt.Sprintf("创建环境包 staging 目录失败: %v", err))
@@ -134,7 +134,7 @@ func buildPackageArchive(index *model.BrowserEnvIndex, sourceEnvPath string, man
 
 	cleanupPaths = append(cleanupPaths, archivePath)
 	completed = true
-	return &BackupBrowserEnvPackageResult{
+	return &PackageArchiveResult{
 		FilePath: archivePath,
 		FileName: filepath.Base(archivePath),
 		Cleanup:  cleanup,

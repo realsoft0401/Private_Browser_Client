@@ -81,6 +81,7 @@ func Close() error {
 // - status：环境包生命周期状态，支持 created/running/stopped/deleted/archived/error；
 // - container_*：最近一次 Docker 容器运行快照，真实容器状态仍以 Docker 为最终来源；
 // - monitor_status / last_error：后续本机监控与上报使用，不在创建环境包时伪造运行状态；
+// - backup_*：RPA 执行后只保留 tar.gz 备份时的资产索引，备份包仍放在受控 data/browser-envs/users/{userId}/{rpaType}/ 目录；
 // - fingerprint_restored：指纹是否已注入到运行态容器，不等同于是否存在指纹备份；
 // - has_browser_data：browser-data/profile 目录是否已建立，用于快速判断环境包结构是否完整；
 // - *_at：生命周期时间戳，deleted_at 保留给历史假删除/归档兼容；当前 DELETE 已调整为物理删除目录并移除索引。
@@ -106,6 +107,12 @@ func migrate() error {
 			container_status TEXT NOT NULL DEFAULT 'unknown',
 			monitor_status TEXT NOT NULL DEFAULT 'unknown',
 			last_error TEXT,
+			backup_path TEXT,
+			backup_checksum TEXT,
+			backup_size INTEGER,
+			backup_at INTEGER,
+			backup_version INTEGER,
+			last_restored_at INTEGER,
 			fingerprint_restored INTEGER NOT NULL DEFAULT 0,
 			has_browser_data INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
@@ -126,5 +133,65 @@ func migrate() error {
 			return fmt.Errorf("migrate sqlite failed: %w", err)
 		}
 	}
+	return migrateBrowserEnvBackupColumns()
+}
+
+// migrateBrowserEnvBackupColumns 给旧 SQLite 数据库补齐备份资产字段。
+//
+// 设计来源：
+// - 备份/恢复模型是在环境包索引表上线后新增的，用户已有本地库不能靠 CREATE TABLE 自动获得新列；
+// - 这些字段只保存备份包路径、校验和和时间，不保存代理明文、指纹 raw 或 browser-data 内容；
+// - 使用幂等列检查，避免每次启动重复 ALTER TABLE 报 duplicate column。
+func migrateBrowserEnvBackupColumns() error {
+	columns := map[string]string{
+		"backup_path":      "TEXT",
+		"backup_checksum":  "TEXT",
+		"backup_size":      "INTEGER",
+		"backup_at":        "INTEGER",
+		"backup_version":   "INTEGER",
+		"last_restored_at": "INTEGER",
+	}
+	for name, definition := range columns {
+		exists, err := sqliteColumnExists("browser_envs", name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err = DB.Exec(fmt.Sprintf("ALTER TABLE browser_envs ADD COLUMN %s %s", name, definition)); err != nil {
+			return fmt.Errorf("add browser_envs.%s failed: %w", name, err)
+		}
+	}
 	return nil
+}
+
+// sqliteColumnExists 通过 PRAGMA table_info 判断字段是否存在。
+//
+// table/column 只由迁移代码传入固定值，不接收外部参数；这里仍然集中封装，
+// 是为了后续继续补列时不散写 PRAGMA 扫描逻辑。
+func sqliteColumnExists(table string, column string) (bool, error) {
+	rows, err := DB.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, fmt.Errorf("read sqlite table info failed: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name string
+		var typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err = rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, fmt.Errorf("scan sqlite table info failed: %w", err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate sqlite table info failed: %w", err)
+	}
+	return false, nil
 }

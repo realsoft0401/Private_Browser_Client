@@ -3,9 +3,7 @@ package BrowserEnv
 import (
 	"archive/tar"
 	"compress/gzip"
-	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	browserEnvDao "private_browser_client/Dao/BrowserEnv"
 	model "private_browser_client/Models/BrowserEnv"
 	edgeModel "private_browser_client/Models/Edge"
 	edgeService "private_browser_client/Service/Edge"
@@ -23,108 +20,14 @@ import (
 
 const browserEnvPackageVersion = 1
 
-// BackupBrowserEnvPackageResult 是备份包生成后的内部结果。
+// PackageArchiveResult 是环境包 tar.gz 生成后的内部结果。
 //
-// HTTP 层只负责把 FilePath 作为下载流返回；Cleanup 必须在响应完成后调用，
-// 避免临时 tar.gz 和 staging 目录长期留在本机。
-type BackupBrowserEnvPackageResult struct {
+// 当前不再暴露旧的临时打包下载接口；这个结果只作为 Service 内部打包 helper 的返回值。
+// 调用方必须在归档复制或发送完成后调用 Cleanup，避免临时 tar.gz 和 staging 目录长期留在本机。
+type PackageArchiveResult struct {
 	FilePath string
 	FileName string
 	Cleanup  func()
-}
-
-// BackupBrowserEnvPackage 生成环境包 .tar.gz 备份。
-//
-// 设计来源：
-// - 用户确认在实现 import-package 前必须先有标准备份包，避免导入一个只存在于文档里的理论格式；
-// - 备份动作只生成包，不删除源目录、SQLite 索引、Docker 容器或浏览器镜像；
-// - 运行中备份会产生半一致 browser-data/profile，因此第一版必须拒绝 running 状态。
-//
-// 职责边界：
-// - 负责校验索引、运行态、环境包路径和标准文件；
-// - 负责复制到 staging，只修改 staging 里的 manifest 导出元信息；
-// - 负责生成 checksums 和 tar.gz 文件；
-// - 不修改源环境包，不改变 identityHash，不参与导入落库。
-func (s *Service) BackupBrowserEnvPackage(envID string) (*BackupBrowserEnvPackageResult, error) {
-	envID = strings.TrimSpace(envID)
-	if envID == "" {
-		return nil, invalidError("envId 不能为空")
-	}
-
-	runEnvMu.Lock()
-	defer runEnvMu.Unlock()
-
-	handler := browserEnvDao.NewRuntimeModelHandler()
-	index, err := handler.GetBrowserEnvIndexByID(context.Background(), envID)
-	if err != nil {
-		if errors.Is(err, browserEnvDao.ErrBrowserEnvNotFound) {
-			return nil, notFoundError("环境包不存在")
-		}
-		return nil, internalError(err.Error())
-	}
-	if index.Status == model.BrowserEnvStatusDeleted || index.Status == model.BrowserEnvStatusArchived {
-		return nil, conflictError("环境包已删除或归档，不能备份")
-	}
-	if index.Status == model.BrowserEnvStatusRunning || index.ContainerStatus == model.BrowserEnvStatusRunning {
-		return nil, conflictError("环境包正在运行，请先停止后再备份")
-	}
-	if err = ensureDockerNotRunningForPackage(index); err != nil {
-		return nil, err
-	}
-
-	sourceEnvPath, err := resolveManagedEnvPath(index)
-	if err != nil {
-		return nil, internalError(err.Error())
-	}
-	manifest, err := validateBackupSourcePackage(index, sourceEnvPath)
-	if err != nil {
-		return nil, internalError(err.Error())
-	}
-
-	stagingRoot, err := os.MkdirTemp("", "private-browser-backup-*")
-	if err != nil {
-		return nil, internalError(fmt.Sprintf("创建备份 staging 目录失败: %v", err))
-	}
-	cleanupPaths := []string{stagingRoot}
-	cleanup := func() {
-		for _, path := range cleanupPaths {
-			_ = os.RemoveAll(path)
-		}
-	}
-	completed := false
-	defer func() {
-		if !completed {
-			cleanup()
-		}
-	}()
-
-	stagingEnvPath := filepath.Join(stagingRoot, index.EnvID)
-	if err = copyDirectory(sourceEnvPath, stagingEnvPath); err != nil {
-		return nil, internalError(err.Error())
-	}
-	if err = writeExportManifest(stagingEnvPath, manifest, "backup-package"); err != nil {
-		return nil, internalError(err.Error())
-	}
-
-	archivePath := filepath.Join(stagingRoot, buildBackupArchiveFileName(index.EnvID, time.Now().Unix()))
-	if err = createTarGzFromDirectory(stagingEnvPath, index.EnvID, archivePath); err != nil {
-		return nil, internalError(err.Error())
-	}
-	stat, err := os.Stat(archivePath)
-	if err != nil {
-		return nil, internalError(fmt.Sprintf("读取备份包失败: %v", err))
-	}
-	if stat.Size() <= 0 {
-		return nil, internalError("备份包为空")
-	}
-
-	cleanupPaths = append(cleanupPaths, archivePath)
-	completed = true
-	return &BackupBrowserEnvPackageResult{
-		FilePath: archivePath,
-		FileName: filepath.Base(archivePath),
-		Cleanup:  cleanup,
-	}, nil
 }
 
 // ensureDockerNotRunningForPackage 用 Docker 实时状态兜底确认环境包没有运行。

@@ -40,6 +40,10 @@ func (s *Service) GetBrowserEnvDetail(envID string, httpBase string, wsBase stri
 	}
 	attachRunningVNCLinks([]*model.BrowserEnvIndex{index}, httpBase, wsBase)
 
+	if index.Status == model.BrowserEnvStatusBackedUp || index.Status == model.BrowserEnvStatusArchived {
+		return buildBackedUpBrowserEnvDetail(index), nil
+	}
+
 	detail, err := loadBrowserEnvDetail(index)
 	if err != nil {
 		return nil, internalError(err.Error())
@@ -53,6 +57,28 @@ func (s *Service) GetBrowserEnvDetail(envID string, httpBase string, wsBase stri
 		}
 	}
 	return detail, nil
+}
+
+// buildBackedUpBrowserEnvDetail 返回只有备份资产索引、没有环境目录时的详情。
+//
+// 设计来源：
+// - 新备份流程会删除 browser-envs/{envId} 源目录，但保留 SQLite 索引用于恢复和下载；
+// - 如果详情接口继续强读 manifest/profile，就会把正常 backed_up 状态误报成服务错误；
+// - 因此这里明确返回“目录已释放，需要 restore”的一致性信息，不伪造配置文件内容。
+func buildBackedUpBrowserEnvDetail(index *model.BrowserEnvIndex) *model.BrowserEnvDetailResponse {
+	return &model.BrowserEnvDetailResponse{
+		Index: index,
+		Consistency: model.BrowserEnvConsistencyCheck{
+			ManifestMatchesIndex: false,
+			IdentityHashMatches:  false,
+			ProxyConfigExists:    false,
+			BrowserDataExists:    false,
+			Errors: []string{
+				"环境包已备份，源环境目录已释放；请先 restore 后再查看完整文件详情",
+			},
+		},
+		Files: map[string]string{},
+	}
 }
 
 // loadBrowserEnvDetail 从环境包目录读取详情文件。

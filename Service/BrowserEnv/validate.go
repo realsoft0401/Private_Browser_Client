@@ -143,7 +143,7 @@ func normalizeListQuery(query model.ListBrowserEnvQuery) (model.ListBrowserEnvQu
 		}
 	}
 	if query.Status != "" && !isSupportedBrowserEnvStatus(query.Status) {
-		return query, invalidError("status 仅支持 created/running/stopped/deleted/archived/error")
+		return query, invalidError("status 仅支持 created/running/stopped/backed_up/deleted/archived/error")
 	}
 	if query.Page <= 0 {
 		query.Page = defaultListPage
@@ -166,6 +166,7 @@ func isSupportedBrowserEnvStatus(status string) bool {
 	case model.BrowserEnvStatusCreated,
 		model.BrowserEnvStatusRunning,
 		model.BrowserEnvStatusStopped,
+		model.BrowserEnvStatusBackedUp,
 		model.BrowserEnvStatusDeleted,
 		model.BrowserEnvStatusArchived,
 		model.BrowserEnvStatusError:
