@@ -179,6 +179,19 @@ func (s *Service) CreateDockerContainer(name string, config *edgeModel.DockerCon
 // - 返回 Docker 流式事件，方便前端或中心端展示进度；
 // - 不在这里写死业务镜像名，后续镜像选择规则应由中心服务端或配置下发。
 func (s *Service) PullDockerImage(param *edgeModel.PullImageRequest) ([]edgeModel.DockerPullEvent, error) {
+	return s.PullDockerImageWithProgress(param, nil)
+}
+
+// PullDockerImageWithProgress 拉取镜像并把 Docker JSON Lines 事件同步回调给调用方。
+//
+// 设计来源：
+// - 用户指出 Docker pull 容易超过普通 HTTP 超时，需要通过 SSE 观察真实进度；
+// - Docker Engine 本身已经返回逐层事件，因此 Service 层保留回调入口，HTTP 层只负责把事件转成任务进度。
+//
+// 职责边界：
+// - 这里仍然只访问本机 Docker API，不保存任务、不知道 SSE；
+// - onEvent 失败不会影响 Docker 拉取，避免展示层错误中断底层镜像准备。
+func (s *Service) PullDockerImageWithProgress(param *edgeModel.PullImageRequest, onEvent func(edgeModel.DockerPullEvent)) ([]edgeModel.DockerPullEvent, error) {
 	if param == nil {
 		return nil, fmt.Errorf("请求参数不能为空")
 	}
@@ -200,6 +213,9 @@ func (s *Service) PullDockerImage(param *edgeModel.PullImageRequest) ([]edgeMode
 			return err
 		}
 		events = append(events, event)
+		if onEvent != nil {
+			onEvent(event)
+		}
 		if event.Error != "" {
 			return fmt.Errorf("%s", event.Error)
 		}

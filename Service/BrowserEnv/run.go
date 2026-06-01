@@ -20,10 +20,13 @@ import (
 	edgeModel "private_browser_client/Models/Edge"
 	edgeService "private_browser_client/Service/Edge"
 	"private_browser_client/Settings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const containerCDPPort = 9222
 const timezoneRecreateLimit = 3
+const hostTunDevicePath = "/dev/net/tun"
 
 var runEnvMu = sync.Mutex{}
 
@@ -133,6 +136,9 @@ func runBrowserEnvLocked(envID string, param *model.RunBrowserEnvRequest) (*mode
 	createConfig, err := buildDockerCreateConfig(pkg)
 	if err != nil {
 		_ = updateRunError(envID, err.Error())
+		if _, ok := IsBusinessError(err); ok {
+			return nil, err
+		}
 		return nil, internalError(err.Error())
 	}
 	created, err := edge.CreateDockerContainer(pkg.Container.ContainerName, createConfig)
@@ -269,10 +275,6 @@ func buildBindingIdentityFromProfile(userID string, profile model.ProfileFile, p
 // - 端口、挂载、代理、指纹都来自环境包文件；
 // - 不接受前端传入任意 HostConfig，避免 run 退化为 Docker 参数透传。
 func buildDockerCreateConfig(pkg *runPackage) (*edgeModel.DockerContainerCreateConfig, error) {
-	envValues, err := buildContainerEnv(pkg)
-	if err != nil {
-		return nil, err
-	}
 	shmSize, err := parseSizeBytes(pkg.Profile.Runtime.ShmSize)
 	if err != nil {
 		return nil, err
@@ -305,15 +307,31 @@ func buildDockerCreateConfig(pkg *runPackage) (*edgeModel.DockerContainerCreateC
 		// 让 Chromium sandbox 能正常工作，因此 Go 版 run 不能遗漏这个 HostConfig。
 		SecurityOpt: []string{"seccomp:unconfined"},
 	}
-	if isTunEnabled(pkg.ProxyConfig) {
-		hostConfig.CapAdd = []string{"NET_ADMIN"}
-		hostConfig.Devices = []edgeModel.DockerContainerDeviceMapping{
-			{
-				PathOnHost:        "/dev/net/tun",
-				PathInContainer:   "/dev/net/tun",
-				CgroupPermissions: "rwm",
-			},
+	runtimeProxyConfig := pkg.ProxyConfig
+	tunEnabled, err := detectClashTunEnabled(pkg.ProxyConfig)
+	if err != nil {
+		return nil, err
+	}
+	if tunEnabled {
+		if hostTunDeviceAvailable() {
+			hostConfig.CapAdd = []string{"NET_ADMIN"}
+			hostConfig.Devices = []edgeModel.DockerContainerDeviceMapping{
+				{
+					PathOnHost:        "/dev/net/tun",
+					PathInContainer:   "/dev/net/tun",
+					CgroupPermissions: "rwm",
+				},
+			}
+		} else {
+			runtimeProxyConfig, err = disableClashTunForRuntime(pkg.ProxyConfig)
+			if err != nil {
+				return nil, err
+			}
 		}
+	}
+	envValues, err := buildContainerEnv(pkg, runtimeProxyConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	return &edgeModel.DockerContainerCreateConfig{
@@ -329,7 +347,11 @@ func buildDockerCreateConfig(pkg *runPackage) (*edgeModel.DockerContainerCreateC
 //
 // 这些变量对应 Private_Browser_Control 镜像 entrypoint 里已经验证过的启动参数；
 // 第一版只从环境包转换，不允许调用方在 run 请求里覆盖，避免前后端状态不一致。
-func buildContainerEnv(pkg *runPackage) ([]string, error) {
+//
+// runtimeProxyConfig 是本次容器实际注入的代理配置。它通常等于 pkg.ProxyConfig；
+// 但当模板启用了 tun 而宿主机没有 /dev/net/tun 时，run 会临时把注入配置里的 tun.enable 改成 false，
+// 避免镜像入口脚本直接退出，同时不改写环境包磁盘上的 proxy/clash.yaml。
+func buildContainerEnv(pkg *runPackage, runtimeProxyConfig string) ([]string, error) {
 	envValues := []string{
 		"TZ=" + pkg.Profile.Environment.Timezone,
 		"BROWSER_LANG=" + pkg.Profile.Environment.Language,
@@ -345,7 +367,7 @@ func buildContainerEnv(pkg *runPackage) ([]string, error) {
 	if pkg.Profile.Proxy.Enabled {
 		envValues = append(envValues,
 			"ENABLE_CLASH_VERGE=true",
-			"CLASH_VERGE_CONFIG_BASE64="+base64.StdEncoding.EncodeToString([]byte(pkg.ProxyConfig)),
+			"CLASH_VERGE_CONFIG_BASE64="+base64.StdEncoding.EncodeToString([]byte(runtimeProxyConfig)),
 		)
 	}
 	runtimeConfig := strings.TrimSpace(string(pkg.RuntimeConfigRaw))
@@ -508,8 +530,8 @@ func finalizeRunPackage(edge *edgeService.Service, pkg *runPackage, deviceInfo *
 		Image:          pkg.Profile.Runtime.Image,
 		Status:         model.BrowserEnvStatusRunning,
 		Ports:          pkg.Profile.Ports,
-		CDPURL:         fmt.Sprintf("http://127.0.0.1:%d", pkg.Profile.Ports.CDP),
-		VNCURL:         fmt.Sprintf("vnc://127.0.0.1:%d", pkg.Profile.Ports.VNC),
+		CDPURL:         "http://" + publishedPortAddressForService(pkg.Profile.Ports.CDP),
+		VNCURL:         "vnc://" + publishedPortAddressForService(pkg.Profile.Ports.VNC),
 		DockerAPIURL:   dockerAPIURL,
 		DeviceArch:     deviceArch,
 		TimezoneStatus: timezoneStatus,
@@ -550,6 +572,9 @@ func recreateContainerAfterTimezoneProbe(edge *edgeService.Service, pkg *runPack
 	createConfig, err := buildDockerCreateConfig(reloaded)
 	if err != nil {
 		_ = updateRunError(pkg.Manifest.EnvID, err.Error())
+		if _, ok := IsBusinessError(err); ok {
+			return nil, err
+		}
 		return nil, internalError(err.Error())
 	}
 	created, err := edge.CreateDockerContainer(reloaded.Container.ContainerName, createConfig)
@@ -602,13 +627,88 @@ func dockerPortKey(port int) string {
 	return strconv.Itoa(port) + "/tcp"
 }
 
-// isTunEnabled 判断代理配置是否启用了 tun。
+// detectClashTunEnabled 判断代理配置是否启用了 tun。
 //
-// 这沿用 Node 版 compose 生成脚本的判断思路：只有 clash 配置里明确 tun.enable=true，
-// 才给容器追加 NET_ADMIN 和 /dev/net/tun，避免普通代理配置拿到不必要的宿主机能力。
-func isTunEnabled(configText string) bool {
-	pattern := regexp.MustCompile(`(?m)^\s*tun:\s*[\s\S]*?^\s*enable:\s*true\s*$`)
-	return pattern.MatchString(configText)
+// 设计来源：
+// - 用户指出 clash/mihomo 配置里 `tun.enable=true` 时，容器必须具备 NET_ADMIN 和 /dev/net/tun；
+// - 早期正则判断容易被注释、缩进或其它 enable 字段误伤，因此这里改用 YAML 结构化解析；
+// - 只有明确开启 TUN 时才提升容器权限，避免普通 mixed-port 代理配置拿到不必要的宿主机能力。
+//
+// 职责边界：
+// - 只判断配置是否需要 TUN，不修改 YAML、不校验完整 clash 语义；
+// - YAML 无法解析时返回参数错误，让调用方知道当前配置连 TUN 能力判断都无法安全完成。
+func detectClashTunEnabled(configText string) (bool, error) {
+	if strings.TrimSpace(configText) == "" {
+		return false, nil
+	}
+	var payload struct {
+		Tun struct {
+			Enable bool `yaml:"enable"`
+		} `yaml:"tun"`
+	}
+	if err := yaml.Unmarshal([]byte(configText), &payload); err != nil {
+		return false, invalidError("代理配置 YAML 无法解析，不能判断 tun.enable: " + err.Error())
+	}
+	return payload.Tun.Enable, nil
+}
+
+// disableClashTunForRuntime 只在本次 Docker 环境变量里关闭 tun.enable。
+//
+// 设计来源：
+//   - 当前代理模板普遍带 `tun.enable=true`，但 Mac / Docker Desktop 常常没有可挂载的 /dev/net/tun；
+//   - 浏览器镜像入口脚本会主动拒绝 “tun.enable=true 但无 TUN 设备” 的组合；
+//   - 因此边缘服务在无 TUN 节点上做运行时降级：注入容器的 CLASH_VERGE_CONFIG_BASE64 使用 tun.enable=false，
+//     让 mixed-port + 浏览器代理链路先跑通；磁盘上的 proxy/clash.yaml 保持原样，便于迁移到 Linux 节点后自动恢复 TUN。
+//
+// 职责边界：
+// - 只修改 YAML 顶层 tun.enable，不改变代理节点、规则、DNS、mode 等其它字段；
+// - 只用于容器启动环境变量，不写回 profile/proxy 文件，不改变 identityHash；
+// - 如果 YAML 本身无法解析，返回参数错误，避免把坏配置继续注入镜像。
+func disableClashTunForRuntime(configText string) (string, error) {
+	if strings.TrimSpace(configText) == "" {
+		return configText, nil
+	}
+	var payload map[string]any
+	if err := yaml.Unmarshal([]byte(configText), &payload); err != nil {
+		return "", invalidError("代理配置 YAML 无法解析，不能运行时关闭 tun.enable: " + err.Error())
+	}
+	rawTun, ok := payload["tun"]
+	if !ok {
+		return configText, nil
+	}
+	tun, ok := rawTun.(map[string]any)
+	if !ok {
+		return "", invalidError("代理配置 tun 字段不是 YAML object，不能运行时关闭 tun.enable")
+	}
+	tun["enable"] = false
+	payload["tun"] = tun
+	bytes, err := yaml.Marshal(payload)
+	if err != nil {
+		return "", internalError("生成运行时代理配置失败: " + err.Error())
+	}
+	return string(bytes), nil
+}
+
+// hostTunDeviceAvailable 检查当前宿主机是否具备 TUN 设备。
+//
+// 设计来源：
+// - 代理配置模板通常都会带 `tun.enable=true`，所以不能把缺少 /dev/net/tun 当成硬阻断；
+// - Linux 商用节点具备 /dev/net/tun 时，自动追加 NET_ADMIN 和设备挂载，获得完整 TUN/DNS 能力；
+// - Mac / Docker Desktop 或未加载 tun 的开发节点则降级继续启动，容器仍可依赖 mixed-port + 浏览器代理链路跑通。
+//
+// 职责边界：
+// - 这里只决定是否追加 Docker HostConfig 能力，不改写用户传入的 clash.yaml；
+// - 不返回业务错误，避免通用代理模板在无 TUN 节点上无法启动；
+// - 后续如果中心端要强制商用节点必须具备 TUN，应新增节点能力校验策略，而不是在本机 run 链路硬失败。
+func hostTunDeviceAvailable() bool {
+	stat, err := os.Stat(hostTunDevicePath)
+	if err != nil {
+		return false
+	}
+	if stat.IsDir() || stat.Mode()&os.ModeDevice == 0 {
+		return false
+	}
+	return true
 }
 
 // parseSizeBytes 把 profile.runtime.shmSize 转成 Docker API 需要的字节数。

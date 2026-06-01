@@ -56,15 +56,17 @@ func (s *Service) GetBrowserEnvVNCInfo(envID string, httpBase string, wsBase str
 	}, nil
 }
 
-// ProxyBrowserEnvVNC 代理 noVNC WebSocket 到本机 VNC TCP 端口。
+// ProxyBrowserEnvVNC 代理 noVNC WebSocket 到浏览器容器的 VNC TCP 端口。
 //
 // 它在 Go 服务里承担 websockify 的角色：
-// browser(noVNC) <-> WebSocket <-> Private_Browser_Client <-> TCP 127.0.0.1:vncPort <-> x11vnc。
+// browser(noVNC) <-> WebSocket <-> Private_Browser_Client <-> Docker published port <-> x11vnc。
 //
 // 维护原则：
-// - 目标端口只能来自 browser_envs，不能通过 query 参数传入；
-// - 这个代理只做字节转发，不理解 VNC 协议，不保存画面或剪贴板内容；
-// - 后续商业化必须加鉴权/临时 token，避免任何人拿 envId 就能进入远程桌面。
+//   - 目标端口只能来自 browser_envs，不能通过 query 参数传入；
+//   - 这个代理只做字节转发，不理解 VNC 协议，不保存画面或剪贴板内容；
+//   - 不能把目标地址写死为 127.0.0.1：服务容器化运行时 127.0.0.1 是服务容器自己，
+//     必须根据 Docker API 地址选择 host.docker.internal 或真实宿主机地址；
+//   - 后续商业化必须加鉴权/临时 token，避免任何人拿 envId 就能进入远程桌面。
 func (s *Service) ProxyBrowserEnvVNC(writer http.ResponseWriter, request *http.Request, envID string) error {
 	index, err := getRuntimeIndex(envID)
 	if err != nil {
@@ -77,9 +79,10 @@ func (s *Service) ProxyBrowserEnvVNC(writer http.ResponseWriter, request *http.R
 		return conflictError("环境包未运行，不能连接 VNC")
 	}
 
-	tcpConn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", index.VNCPort), 5*time.Second)
+	targetAddr := publishedPortAddressForService(index.VNCPort)
+	tcpConn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
 	if err != nil {
-		return remoteError(fmt.Sprintf("连接 VNC TCP 失败: %v", err))
+		return remoteError(fmt.Sprintf("连接 VNC TCP 失败: %s: %v", targetAddr, err))
 	}
 	defer tcpConn.Close()
 

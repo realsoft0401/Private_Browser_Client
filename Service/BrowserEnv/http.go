@@ -1,6 +1,7 @@
 package BrowserEnv
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,6 +12,7 @@ import (
 
 	model "private_browser_client/Models/BrowserEnv"
 	"private_browser_client/Pkg/HttpResponse"
+	TaskService "private_browser_client/Service/Task"
 )
 
 // ListBrowserEnvs 查询本机环境包索引列表。
@@ -62,49 +64,30 @@ func ListBrowserEnvs(c *gin.Context) {
 //
 // HTTP 层只接收 envId 和少量生命周期参数；Docker 镜像、端口、代理、指纹和挂载都由 Service 从环境包读取。
 // 这条接口不能演变成 Docker run 参数透传，否则会破坏环境包作为本机事实来源的设计。
+// run 内部包含 Docker 创建、CDP/ curl timezone 探测和必要的二次重建，因此这里返回 SSE 任务，避免调用方等待到 socket hang up。
 func RunBrowserEnv(c *gin.Context) {
 	param, ok := bindOptionalRunRequest(c)
 	if !ok {
 		return
 	}
-	result, err := NewService().RunBrowserEnv(c.Param("envId"), param)
-	if err != nil {
-		if bizErr, ok := IsBusinessError(err); ok {
-			switch bizErr.Kind {
-			case errorKindInvalid:
-				HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, bizErr.Message)
-			case errorKindNotFound:
-				HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeNotFound, bizErr.Message)
-			case errorKindConflict:
-				HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeConflict, bizErr.Message)
-			case errorKindRemote:
-				HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeRemoteError, bizErr.Message)
-			default:
-				HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeServerBusy, bizErr.Message)
-			}
-			return
-		}
-		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeServerBusy, err.Error())
-		return
-	}
-	HttpResponse.ResponseSuccess(c, result)
+	task := TaskService.Create("browser_env_run", "browser_env", c.Param("envId"), "浏览器环境启动任务已创建")
+	go runBrowserEnvTask(task.ID, c.Param("envId"), param)
+	HttpResponse.ResponseSuccess(c, TaskService.NewStartResponse(task, publicRequestBase(c)))
 }
 
 // StopBrowserEnv 停止本地浏览器环境包对应的 Docker 容器。
 //
 // HTTP 层只接收 envId 和 timeoutSeconds；容器 ID、容器名和状态回写都由 Service 从 SQLite 与环境包文件里确认。
 // 这样前端不需要也不应该绕过环境包模型直接操作 Docker 容器。
+// stop 可能等待浏览器写入 profile 和 Docker 停止超时，因此也走 SSE 任务通道。
 func StopBrowserEnv(c *gin.Context) {
 	param, ok := bindOptionalStopRequest(c)
 	if !ok {
 		return
 	}
-	result, err := NewService().StopBrowserEnv(c.Param("envId"), param)
-	if err != nil {
-		writeBrowserEnvError(c, err)
-		return
-	}
-	HttpResponse.ResponseSuccess(c, result)
+	task := TaskService.Create("browser_env_stop", "browser_env", c.Param("envId"), "浏览器环境停止任务已创建")
+	go stopBrowserEnvTask(task.ID, c.Param("envId"), param)
+	HttpResponse.ResponseSuccess(c, TaskService.NewStartResponse(task, publicRequestBase(c)))
 }
 
 // BackupBrowserEnvPackage 生成环境包备份 tar.gz。
@@ -164,13 +147,11 @@ func ImportBrowserEnvPackage(c *gin.Context) {
 //
 // HTTP 层只接收 envId；是否允许删除、running 冲突判断和索引更新都由 Service 完成。
 // 这条接口会删除配置目录和 browser-data/profile，前端必须在调用前提示用户“删除后无法找回”。
+// 删除涉及容器清理、物理目录删除和 SQLite 索引更新，改为 SSE 任务后前端能明确看到最终成功/失败。
 func DeleteBrowserEnv(c *gin.Context) {
-	result, err := NewService().DeleteBrowserEnv(c.Param("envId"))
-	if err != nil {
-		writeBrowserEnvError(c, err)
-		return
-	}
-	HttpResponse.ResponseSuccess(c, result)
+	task := TaskService.Create("browser_env_delete", "browser_env", c.Param("envId"), "浏览器环境删除任务已创建")
+	go deleteBrowserEnvTask(task.ID, c.Param("envId"))
+	HttpResponse.ResponseSuccess(c, TaskService.NewStartResponse(task, publicRequestBase(c)))
 }
 
 // GetBrowserEnvDetail 返回单个环境包详情。
@@ -199,10 +180,23 @@ func GetBrowserEnvVNCInfo(c *gin.Context) {
 	HttpResponse.ResponseSuccess(c, result)
 }
 
+// TestBrowserEnvCDP 返回环境包 CDP 端口的基础连通性诊断。
+//
+// 这个接口只做 CDP 自身测试，不访问 timezone provider、不判断代理出口；
+// 它用于把“CDP 端口打不开”和“provider/规则链路失败”拆开排查。
+func TestBrowserEnvCDP(c *gin.Context) {
+	result, err := NewService().TestBrowserEnvCDP(c.Param("envId"))
+	if err != nil {
+		writeBrowserEnvError(c, err)
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
 // UpdateBrowserEnvProxy 修改环境包代理配置。
 //
-// 这不是热更新接口：代理会进入容器启动环境变量，所以运行中环境包会被 Service 拒绝修改。
-// 调用方应按 stop -> update proxy -> run 的顺序让配置真正生效。
+// 这不是热更新接口：代理会进入容器启动环境变量，所以 running 环境会由后台任务重建容器。
+// running 环境返回 taskId/eventsUrl，前端必须通过 SSE 观察后台重建和 timezone 探测结果。
 func UpdateBrowserEnvProxy(c *gin.Context) {
 	param, ok := bindStrictProxyUpdateRequest(c)
 	if !ok {
@@ -213,13 +207,22 @@ func UpdateBrowserEnvProxy(c *gin.Context) {
 		writeBrowserEnvError(c, err)
 		return
 	}
+	attachTaskEventsURL(c, result)
 	HttpResponse.ResponseSuccess(c, result)
+}
+
+func attachTaskEventsURL(c *gin.Context, result *model.UpdateBrowserEnvProxyResponse) {
+	if result == nil || strings.TrimSpace(result.TaskID) == "" {
+		return
+	}
+	result.EventsURL = publicRequestBase(c) + "/api/v1/edge/tasks/" + result.TaskID + "/events"
 }
 
 // UpdateBrowserEnvProxyMode 切换环境包 Clash 代理模式。
 //
 // 这条接口只修改 proxy/clash.yaml 的 mode 字段，不属于 run 参数；
 // running 环境会由 Service 自动重建容器，并重新执行容器内 timezone 探测。
+// 与 PATCH proxy 一样，running 环境会返回 taskId/eventsUrl，避免同步等待 rule/CDP 链路。
 func UpdateBrowserEnvProxyMode(c *gin.Context) {
 	param := new(model.UpdateBrowserEnvProxyModeRequest)
 	decoder := json.NewDecoder(c.Request.Body)
@@ -233,7 +236,58 @@ func UpdateBrowserEnvProxyMode(c *gin.Context) {
 		writeBrowserEnvError(c, err)
 		return
 	}
+	attachTaskEventsURL(c, result)
 	HttpResponse.ResponseSuccess(c, result)
+}
+
+// runBrowserEnvTask 在后台执行浏览器环境启动。
+//
+// 设计来源：
+// - run 期间可能拉起容器、等待浏览器/CDP、探测 timezone，并在 timezone 变化后重建一次容器；
+// - 这些步骤都可能超过 Apifox/前端 HTTP 超时时间，所以 HTTP handler 只创建任务，真实结果通过 SSE 返回。
+func runBrowserEnvTask(taskID string, envID string, param *model.RunBrowserEnvRequest) {
+	TaskService.MarkRunning(taskID, "browser_env_run", "开始启动浏览器环境", map[string]any{"envId": envID})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go TaskService.RunHeartbeat(ctx, taskID, "browser_env_run", "浏览器环境启动仍在执行")
+	result, err := NewService().RunBrowserEnv(envID, param)
+	if err != nil {
+		TaskService.Failed(taskID, "browser_env_run", err.Error())
+		return
+	}
+	TaskService.Done(taskID, "browser_env_run", "浏览器环境启动完成", result)
+}
+
+// stopBrowserEnvTask 在后台执行浏览器环境停止。
+//
+// stop 需要给浏览器容器留出退出时间，不能因为 HTTP 客户端断开就中断状态回写。
+func stopBrowserEnvTask(taskID string, envID string, param *model.StopBrowserEnvRequest) {
+	TaskService.MarkRunning(taskID, "browser_env_stop", "开始停止浏览器环境", map[string]any{"envId": envID})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go TaskService.RunHeartbeat(ctx, taskID, "browser_env_stop", "浏览器环境停止仍在执行")
+	result, err := NewService().StopBrowserEnv(envID, param)
+	if err != nil {
+		TaskService.Failed(taskID, "browser_env_stop", err.Error())
+		return
+	}
+	TaskService.Done(taskID, "browser_env_stop", "浏览器环境停止完成", result)
+}
+
+// deleteBrowserEnvTask 在后台执行彻底删除。
+//
+// 删除是不可恢复动作，前端负责二次确认；后端任务只保证删除过程可观察，并把失败原因留在任务事件里。
+func deleteBrowserEnvTask(taskID string, envID string) {
+	TaskService.MarkRunning(taskID, "browser_env_delete", "开始删除浏览器环境", map[string]any{"envId": envID})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go TaskService.RunHeartbeat(ctx, taskID, "browser_env_delete", "浏览器环境删除仍在执行")
+	result, err := NewService().DeleteBrowserEnv(envID)
+	if err != nil {
+		TaskService.Failed(taskID, "browser_env_delete", err.Error())
+		return
+	}
+	TaskService.Done(taskID, "browser_env_delete", "浏览器环境删除完成", result)
 }
 
 // ProxyBrowserEnvVNC 把 noVNC WebSocket 流量代理到本机 VNC TCP 端口。

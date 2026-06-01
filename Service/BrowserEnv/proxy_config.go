@@ -13,6 +13,7 @@ import (
 
 	browserEnvDao "private_browser_client/Dao/BrowserEnv"
 	model "private_browser_client/Models/BrowserEnv"
+	TaskService "private_browser_client/Service/Task"
 	"private_browser_client/Settings"
 )
 
@@ -26,10 +27,13 @@ type proxyConfigPackage struct {
 }
 
 type normalizedProxyUpdate struct {
-	Enabled bool
-	Type    string
-	Config  string
-	Changed bool
+	Enabled      bool
+	Type         string
+	Config       string
+	Image        string
+	ProxyChanged bool
+	ImageChanged bool
+	Changed      bool
 }
 
 // UpdateBrowserEnvProxy 修改环境包代理配置。
@@ -87,7 +91,10 @@ func (s *Service) UpdateBrowserEnvProxy(envID string, param *model.UpdateBrowser
 	if wasRunning {
 		result.RestartRequired = false
 		result.RestartQueued = true
-		enqueueProxyRecreate(envID)
+		task := enqueueProxyRecreate(envID, "browser_env_proxy_update")
+		if task != nil {
+			result.TaskID = task.ID
+		}
 	}
 	return result, nil
 }
@@ -148,10 +155,11 @@ func (s *Service) UpdateBrowserEnvProxyMode(envID string, param *model.UpdateBro
 		return buildProxyUpdateResponse(pkg.Index.EnvID, pkg.Index.Status, pkg.Binding, pkg.Profile, pkg.ProxyConfig, false, false, pkg.Index.UpdatedAt), nil
 	}
 	normalized := &normalizedProxyUpdate{
-		Enabled: true,
-		Type:    firstNonEmpty(pkg.Profile.Proxy.Type, "clash-verge"),
-		Config:  updatedConfig,
-		Changed: true,
+		Enabled:      true,
+		Type:         firstNonEmpty(pkg.Profile.Proxy.Type, "clash-verge"),
+		Config:       updatedConfig,
+		ProxyChanged: true,
+		Changed:      true,
 	}
 	result, err := finalizeProxyUpdate(pkg, normalized)
 	if err != nil {
@@ -160,7 +168,10 @@ func (s *Service) UpdateBrowserEnvProxyMode(envID string, param *model.UpdateBro
 	if wasRunning {
 		result.RestartRequired = false
 		result.RestartQueued = true
-		enqueueProxyRecreate(envID)
+		task := enqueueProxyRecreate(envID, "browser_env_proxy_mode_update")
+		if task != nil {
+			result.TaskID = task.ID
+		}
 	}
 	return result, nil
 }
@@ -175,14 +186,25 @@ func (s *Service) UpdateBrowserEnvProxyMode(envID string, param *model.UpdateBro
 // 职责边界：
 // - 只负责触发 forceRecreate，不吞掉 run 内部的状态落库；
 // - 不向前端推送进度，前端可通过详情/列表查看 container_status、last_error 和 proxy-runtime。
-func enqueueProxyRecreate(envID string) {
+func enqueueProxyRecreate(envID string, taskType string) *TaskService.EdgeTask {
 	envID = strings.TrimSpace(envID)
 	if envID == "" {
-		return
+		return nil
 	}
-	go func(id string) {
-		_, _ = NewService().RunBrowserEnv(id, &model.RunBrowserEnvRequest{ForceRecreate: true})
-	}(envID)
+	task := TaskService.Create(taskType, "browser_env", envID, "代理配置已写入，后台重建任务已创建")
+	go func(id string, taskID string) {
+		TaskService.MarkRunning(taskID, "container_recreate", "开始后台重建浏览器容器", map[string]any{"envId": id})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go TaskService.RunHeartbeat(ctx, taskID, "container_recreate", "浏览器容器重建仍在执行")
+		result, err := NewService().RunBrowserEnv(id, &model.RunBrowserEnvRequest{ForceRecreate: true})
+		if err != nil {
+			TaskService.Failed(taskID, "container_recreate", err.Error())
+			return
+		}
+		TaskService.Done(taskID, "container_recreate", "浏览器容器重建完成", result)
+	}(envID, task.ID)
+	return task
 }
 
 // ensureProxyUpdateStatus 判断当前状态是否允许修改代理配置。
@@ -255,12 +277,13 @@ func loadProxyConfigPackage(index *model.BrowserEnvIndex) (*proxyConfigPackage, 
 // normalizeProxyUpdate 合并 PATCH 请求和现有代理配置。
 //
 // PATCH 允许前端只传被修改字段；但最终落盘必须是完整 profile.proxy + proxy/clash.yaml。
+// image 是 profile.runtime.image 的局部更新入口，和代理配置共用一次重建队列，但不参与 identityHash。
 // mode 属于 Clash YAML 顶层字段：启用代理时可单独修改，也可和 configBase64 一起覆盖；
 // 禁用代理时会清空代理类型和配置，忽略 mode，避免“禁用动作”被空配置校验误伤。
 // 只有实际业务值发生变化时，才标记 Changed=true，避免无意义修改也要求重启容器。
 func normalizeProxyUpdate(pkg *proxyConfigPackage, param *model.UpdateBrowserEnvProxyRequest) (*normalizedProxyUpdate, error) {
-	if param.Enabled == nil && param.Type == nil && param.Mode == nil && param.ConfigBase64 == nil {
-		return nil, invalidError("至少需要传 enabled/type/mode/configBase64 中的一个字段")
+	if param.Enabled == nil && param.Type == nil && param.Image == nil && param.Mode == nil && param.ConfigBase64 == nil {
+		return nil, invalidError("至少需要传 enabled/type/image/mode/configBase64 中的一个字段")
 	}
 	enabled := pkg.Profile.Proxy.Enabled
 	if param.Enabled != nil {
@@ -277,6 +300,13 @@ func normalizeProxyUpdate(pkg *proxyConfigPackage, param *model.UpdateBrowserEnv
 			return nil, err
 		}
 		config = decoded
+	}
+	image := strings.TrimSpace(pkg.Profile.Runtime.Image)
+	if param.Image != nil {
+		image = strings.TrimSpace(*param.Image)
+		if image == "" {
+			return nil, invalidError("image 不能为空")
+		}
 	}
 
 	if enabled {
@@ -305,14 +335,18 @@ func normalizeProxyUpdate(pkg *proxyConfigPackage, param *model.UpdateBrowserEnv
 		config = ""
 	}
 
-	changed := enabled != pkg.Profile.Proxy.Enabled ||
+	proxyChanged := enabled != pkg.Profile.Proxy.Enabled ||
 		proxyType != pkg.Profile.Proxy.Type ||
 		buildTextHash(config) != buildTextHash(pkg.ProxyConfig)
+	imageChanged := image != strings.TrimSpace(pkg.Profile.Runtime.Image)
 	return &normalizedProxyUpdate{
-		Enabled: enabled,
-		Type:    proxyType,
-		Config:  config,
-		Changed: changed,
+		Enabled:      enabled,
+		Type:         proxyType,
+		Config:       config,
+		Image:        image,
+		ProxyChanged: proxyChanged,
+		ImageChanged: imageChanged,
+		Changed:      proxyChanged || imageChanged,
 	}, nil
 }
 
@@ -357,6 +391,27 @@ func extractClashMode(config string) string {
 	return ""
 }
 
+// effectiveClashMode 返回详情和响应里应该展示的代理模式。
+//
+// 设计来源：
+// - 用户发现详情接口看起来没有代理 mode 状态；
+// - 一些历史/导入配置可能没有显式写 `mode:`，但当前 run/timezone 逻辑已经把缺省模式按 rule 处理；
+// - 因此展示层不能返回空字符串误导前端，应该把“有效模式”明确暴露为 rule。
+//
+// 职责边界：
+// - 只用于响应展示，不改写 proxy/clash.yaml；
+// - 禁用代理或非 clash-verge 代理不强行补 rule，避免让前端误判没有 Clash 配置的环境包。
+func effectiveClashMode(config string, enabled bool, proxyType string) string {
+	mode := extractClashMode(config)
+	if mode != "" {
+		return mode
+	}
+	if enabled && strings.EqualFold(strings.TrimSpace(proxyType), "clash-verge") && strings.TrimSpace(config) != "" {
+		return "rule"
+	}
+	return ""
+}
+
 // decodeProxyConfigBase64 解码 PATCH 请求里的代理配置。
 //
 // 设计来源：
@@ -383,54 +438,62 @@ func decodeProxyConfigBase64(raw string) (string, error) {
 	return string(bytes), nil
 }
 
-// finalizeProxyUpdate 写入代理配置修改并同步 identityHash。
+// finalizeProxyUpdate 写入代理配置和运行镜像修改。
 //
 // 代理 hash 参与账号环境身份，修改代理后必须递增 binding.version 并重算 identityHash；
+// image 只影响 Docker create 的镜像选择，不参与 identityHash，因此仅 image 变化时只写 profile/manifest；
 // 但 browser-data/profile 仍然保留，是否继续使用该登录态由业务策略和后续风控检查决定。
 func finalizeProxyUpdate(pkg *proxyConfigPackage, update *normalizedProxyUpdate) (*model.UpdateBrowserEnvProxyResponse, error) {
 	now := time.Now().Unix()
 	pkg.Profile.Proxy.Enabled = update.Enabled
 	pkg.Profile.Proxy.Type = update.Type
+	if update.ImageChanged {
+		pkg.Profile.Runtime.Image = update.Image
+	}
 	if strings.TrimSpace(pkg.Profile.Proxy.ConfigPath) == "" {
 		pkg.Profile.Proxy.ConfigPath = pkg.Manifest.Paths.ProxyConfig
 	}
 	pkg.Profile.Metadata.UpdatedAt = now
 
-	proxyHash := buildTextHash(update.Config)
-	identity := buildBindingIdentityFromProfile(pkg.Manifest.UserID, pkg.Profile, pkg.Manifest.Paths, proxyHash)
-	identityHash, err := buildJSONHash(identity)
-	if err != nil {
-		return nil, internalError(fmt.Sprintf("计算 identityHash 失败: %v", err))
+	if update.ProxyChanged {
+		proxyHash := buildTextHash(update.Config)
+		identity := buildBindingIdentityFromProfile(pkg.Manifest.UserID, pkg.Profile, pkg.Manifest.Paths, proxyHash)
+		identityHash, err := buildJSONHash(identity)
+		if err != nil {
+			return nil, internalError(fmt.Sprintf("计算 identityHash 失败: %v", err))
+		}
+		pkg.Binding.Version++
+		pkg.Binding.Identity = identity
+		pkg.Binding.IdentityHash = identityHash
+		pkg.Binding.ConfigHash = identityHash
+		pkg.Binding.RuntimeProtection.TimezoneStatus = "pending"
+		pkg.Binding.UpdatedAt = now
 	}
-	pkg.Binding.Version++
-	pkg.Binding.Identity = identity
-	pkg.Binding.IdentityHash = identityHash
-	pkg.Binding.ConfigHash = identityHash
-	pkg.Binding.RuntimeProtection.TimezoneStatus = "pending"
-	pkg.Binding.UpdatedAt = now
 	pkg.Manifest.UpdatedAt = now
 
-	if err = writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, "manifest.json"), pkg.Manifest); err != nil {
+	if err := writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, "manifest.json"), pkg.Manifest); err != nil {
 		return nil, internalError(err.Error())
 	}
-	if err = writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.Profile, pkg.Profile); err != nil {
+	if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.Profile, pkg.Profile); err != nil {
 		return nil, internalError(err.Error())
 	}
-	if err = writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.Binding, pkg.Binding); err != nil {
-		return nil, internalError(err.Error())
-	}
-	if err = writePackageText(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.ProxyConfig, update.Config); err != nil {
-		return nil, internalError(err.Error())
-	}
-	if err = writeTimezoneProbePending(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.ProxyRuntime); err != nil {
-		return nil, internalError(err.Error())
+	if update.ProxyChanged {
+		if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.Binding, pkg.Binding); err != nil {
+			return nil, internalError(err.Error())
+		}
+		if err := writePackageText(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.ProxyConfig, update.Config); err != nil {
+			return nil, internalError(err.Error())
+		}
+		if err := writeTimezoneProbePending(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.ProxyRuntime); err != nil {
+			return nil, internalError(err.Error())
+		}
 	}
 
 	nextStatus := pkg.Index.Status
 	if nextStatus == model.BrowserEnvStatusError {
 		nextStatus = model.BrowserEnvStatusStopped
 	}
-	if err = browserEnvDao.NewConfigModelHandler().UpdateBrowserEnvConfig(context.Background(), &model.BrowserEnvConfigUpdate{
+	if err := browserEnvDao.NewConfigModelHandler().UpdateBrowserEnvConfig(context.Background(), &model.BrowserEnvConfigUpdate{
 		EnvID:     pkg.Index.EnvID,
 		Status:    nextStatus,
 		UpdatedAt: now,
@@ -480,10 +543,11 @@ func buildProxyUpdateResponse(envID string, status string, binding model.Binding
 	return &model.UpdateBrowserEnvProxyResponse{
 		EnvID:  envID,
 		Status: status,
+		Image:  profile.Runtime.Image,
 		Proxy: model.BrowserEnvProxyDetail{
 			Enabled:         profile.Proxy.Enabled,
 			Type:            profile.Proxy.Type,
-			Mode:            extractClashMode(config),
+			Mode:            effectiveClashMode(config, profile.Proxy.Enabled, profile.Proxy.Type),
 			ConfigPath:      profile.Proxy.ConfigPath,
 			ConfigHash:      buildTextHash(config),
 			ConfigSizeBytes: len([]byte(config)),

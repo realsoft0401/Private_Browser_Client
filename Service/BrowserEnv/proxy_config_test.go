@@ -45,6 +45,33 @@ func TestNormalizeProxyUpdateModeOnlyUpdatesExistingConfig(t *testing.T) {
 	}
 }
 
+func TestProxyModeNormalizedUpdateMarksProxyChanged(t *testing.T) {
+	pkg := &proxyConfigPackage{
+		Profile: model.ProfileFile{
+			Proxy: model.ProfileProxy{
+				Enabled:    true,
+				Type:       "clash-verge",
+				ConfigPath: "proxy/clash.yaml",
+			},
+		},
+		ProxyConfig: "mode: rule\nmixed-port: 7897\n",
+	}
+	updatedConfig, changed, err := replaceClashMode(pkg.ProxyConfig, "global")
+	if err != nil {
+		t.Fatalf("replaceClashMode returned error: %v", err)
+	}
+	normalized := &normalizedProxyUpdate{
+		Enabled:      true,
+		Type:         firstNonEmpty(pkg.Profile.Proxy.Type, "clash-verge"),
+		Config:       updatedConfig,
+		ProxyChanged: true,
+		Changed:      changed,
+	}
+	if !normalized.Changed || !normalized.ProxyChanged {
+		t.Fatal("proxy-mode update must mark both Changed and ProxyChanged so finalize writes clash.yaml")
+	}
+}
+
 func TestNormalizeProxyUpdateDisableIgnoresModeWhenConfigEmpty(t *testing.T) {
 	pkg := &proxyConfigPackage{
 		Profile: model.ProfileFile{
@@ -71,5 +98,52 @@ func TestNormalizeProxyUpdateDisableIgnoresModeWhenConfigEmpty(t *testing.T) {
 	}
 	if normalized.Type != "" || normalized.Config != "" {
 		t.Fatalf("expected disabled proxy to clear type/config, got type=%q config=%q", normalized.Type, normalized.Config)
+	}
+}
+
+func TestNormalizeProxyUpdateImageOnly(t *testing.T) {
+	pkg := &proxyConfigPackage{
+		Profile: model.ProfileFile{
+			Runtime: model.ProfileRuntime{
+				Image: "old-browser:arm64",
+			},
+			Proxy: model.ProfileProxy{
+				Enabled:    true,
+				Type:       "clash-verge",
+				ConfigPath: "proxy/clash.yaml",
+			},
+		},
+		ProxyConfig: "mode: rule\nmixed-port: 7897\n",
+	}
+	param := &model.UpdateBrowserEnvProxyRequest{
+		Image: testStringPtr("crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64"),
+	}
+
+	normalized, err := normalizeProxyUpdate(pkg, param)
+	if err != nil {
+		t.Fatalf("normalizeProxyUpdate returned error: %v", err)
+	}
+	if !normalized.Changed || !normalized.ImageChanged {
+		t.Fatal("expected image-only update to be marked changed")
+	}
+	if normalized.ProxyChanged {
+		t.Fatal("image-only update must not mark proxy changed")
+	}
+	if normalized.Image != *param.Image {
+		t.Fatalf("unexpected image: %s", normalized.Image)
+	}
+}
+
+func TestEffectiveClashModeDefaultsToRuleForEnabledClash(t *testing.T) {
+	mode := effectiveClashMode("mixed-port: 7897\nrules:\n  - MATCH,relay\n", true, "clash-verge")
+	if mode != "rule" {
+		t.Fatalf("expected missing clash mode to display as rule, got %q", mode)
+	}
+}
+
+func TestEffectiveClashModeDoesNotDefaultWhenProxyDisabled(t *testing.T) {
+	mode := effectiveClashMode("mixed-port: 7897\n", false, "clash-verge")
+	if mode != "" {
+		t.Fatalf("expected disabled proxy mode to stay empty, got %q", mode)
 	}
 }

@@ -87,7 +87,7 @@ func Init(projectRoot string) error {
 	configEngine.SetConfigType("yaml")
 	configEngine.SetDefault("name", "private-browser-client")
 	configEngine.SetDefault("mode", env)
-	configEngine.SetDefault("version", "0.1.0")
+	configEngine.SetDefault("version", "0.1.5")
 	configEngine.SetDefault("server.host", "0.0.0.0")
 	configEngine.SetDefault("server.port", 3300)
 	configEngine.SetDefault("server.read_timeout_seconds", 15)

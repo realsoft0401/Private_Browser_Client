@@ -210,6 +210,32 @@ type RunBrowserEnvResponse struct {
 	Reused         bool   `json:"reused"`
 }
 
+// BrowserEnvCDPTestResponse 是 CDP 基础诊断结果。
+//
+// 设计来源：
+//   - 用户需要一个最小测试程序判断浏览器环境包的 CDP 端口是否可用；
+//   - 这个结果只回答“端口、HTTP /json/version、Target 创建、WebSocket、Runtime.evaluate 是否通”，
+//     不承载 timezone、代理出口或业务自动化判断。
+//
+// 职责边界：
+// - ok=false 代表诊断失败，但接口本身仍可 code=1000 返回，方便前端展示 stage/error；
+// - 环境包不存在、未运行、未分配 CDP 端口这类前置状态错误仍走统一业务错误；
+// - endpoint 是边缘服务内部访问 Docker published port 的地址，前端不要把它当公网连接地址。
+type BrowserEnvCDPTestResponse struct {
+	EnvID           string `json:"envId"`
+	CDPPort         int    `json:"cdpPort"`
+	Endpoint        string `json:"endpoint"`
+	OK              bool   `json:"ok"`
+	Stage           string `json:"stage"`
+	Browser         string `json:"browser,omitempty"`
+	ProtocolVersion string `json:"protocolVersion,omitempty"`
+	WebSocketURL    string `json:"webSocketUrl,omitempty"`
+	RuntimeResult   string `json:"runtimeResult,omitempty"`
+	Error           string `json:"error,omitempty"`
+	TestedAt        int64  `json:"testedAt"`
+	DurationMs      int64  `json:"durationMs"`
+}
+
 // StopBrowserEnvRequest 是停止环境包对应容器的请求体。
 //
 // 设计来源：
@@ -281,15 +307,23 @@ type BrowserEnvVNCInfoResponse struct {
 	WebVNCURL string `json:"webVncUrl"`
 }
 
-// UpdateBrowserEnvProxyRequest 是修改环境包代理配置的请求体。
+// UpdateBrowserEnvProxyRequest 是修改环境包代理配置和运行镜像的请求体。
 //
 // 设计来源：
 // - 用户明确要求“只要改的东西，就需要重新启动容器”；
 // - 代理配置会进入 run 阶段的容器环境变量，并参与 identityHash；
+// - image 会进入 profile.runtime.image，只影响后续 Docker create，不参与环境身份 hash；
 // - 因此这里使用 PATCH 语义允许局部字段；running 环境会进入后台重建队列，非 running 环境返回 restartRequired=true。
 type UpdateBrowserEnvProxyRequest struct {
 	Enabled *bool   `json:"enabled"`
 	Type    *string `json:"type"`
+	// Image 是浏览器环境包下一次 run 使用的 Docker 镜像。
+	//
+	// 设计来源：
+	// - 用户测试时需要把环境包统一切到 arm64 浏览器镜像；
+	// - 镜像属于 profile.runtime.image，不属于代理 YAML，但代理修改后通常会触发同一次容器重建；
+	// - 因此 PATCH proxy 允许顺手修改 image，避免前端为了“代理 + 镜像”再新增一个临时接口。
+	Image *string `json:"image"`
 	// Mode 是 Clash 顶层代理模式。
 	//
 	// 设计来源：
@@ -322,6 +356,7 @@ type UpdateBrowserEnvProxyModeRequest struct {
 type UpdateBrowserEnvProxyResponse struct {
 	EnvID           string                `json:"envId"`
 	Status          string                `json:"status"`
+	Image           string                `json:"image"`
 	Proxy           BrowserEnvProxyDetail `json:"proxy"`
 	BindingVersion  int                   `json:"bindingVersion"`
 	IdentityHash    string                `json:"identityHash"`
@@ -334,6 +369,11 @@ type UpdateBrowserEnvProxyResponse struct {
 	// - 如果 PATCH proxy 同步等待 Docker 重建和 timezone，前端/Apifox 容易出现 socket hang up；
 	// - 因此 running 环境改为快速返回，后台串行 forceRecreate。
 	RestartQueued bool `json:"restartQueued"`
+	// TaskID 是后台重建任务 ID。
+	//
+	// running 环境修改代理时返回该字段，前端可用 EventsURL 连接 SSE 观察 Docker 重建和 timezone 探测进度。
+	TaskID    string `json:"taskId,omitempty"`
+	EventsURL string `json:"eventsUrl,omitempty"`
 	// Restarted 表示本次修改已由边缘服务同步完成容器重建。
 	//
 	// 用户明确要求配置修改后的启动过程对使用者无感知；

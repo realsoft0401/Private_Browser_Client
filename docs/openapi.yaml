@@ -110,7 +110,7 @@ paths:
                 message: success
                 data:
                   - id: sha256:example
-                    repoTags: ["crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1"]
+                    repoTags: ["crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64"]
                     repoDigests: []
                     created: 1779956193
                     size: 123456789
@@ -135,7 +135,7 @@ paths:
                 data:
                   - id: abc123
                     names: ["/bv-318275706305908736-tk-318578131780767744"]
-                    image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
+                    image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
                     imageId: sha256:example
                     command: "/start.sh"
                     created: 1779956193
@@ -158,8 +158,8 @@ paths:
                     rpaType: tk
   /api/v1/edge/docker/pull-image:
     post:
-      summary: 拉取本机 Docker 镜像
-      description: 调用本机 Docker Engine API 的 /images/create 拉取镜像。该接口会改变本机 Docker 状态，但不写数据库。
+      summary: 拉取本机 Docker 镜像（SSE 任务）
+      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台调用本机 Docker Engine API 的 /images/create 拉取镜像，并通过 /api/v1/edge/tasks/{taskId}/events 推送 Docker pull 层进度。该接口会改变本机 Docker 状态，但不写数据库。
       tags: [Edge]
       requestBody:
         required: true
@@ -168,33 +168,37 @@ paths:
             schema:
               $ref: '#/components/schemas/PullImageRequest'
             examples:
-              alpine:
-                summary: 拉取 alpine:latest
+              browserArm64:
+                summary: 拉取 crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
                 value:
-                  image: alpine:latest
+                  image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
               explicitTag:
                 summary: 镜像名和 tag 分开传
                 value:
-                  image: alpine
-                  tag: latest
+                  image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge
+                  tag: 1.1-arm64
       responses:
         '200':
-          description: Docker 拉取事件列表
+          description: SSE 任务已创建。最终 Docker 拉取事件列表会出现在任务 done 事件 result 中。
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DockerPullEventsSuccess'
+                $ref: '#/components/schemas/TaskStartSuccess'
               example:
                 code: 1000
                 message: success
                 data:
-                  - status: Pulling from library/alpine
-                  - status: Download complete
-                    id: latest
+                  taskId: task_1770000000000000000_12345
+                  taskType: docker_pull_image
+                  status: queued
+                  resourceType: docker_image
+                  resourceId: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
+                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  message: Docker 镜像拉取任务已创建
   /api/v1/edge/docker/remove-image:
     post:
-      summary: 删除本机 Docker 镜像
-      description: 调用本机 Docker Engine API 删除镜像。该接口会改变本机 Docker 状态，请谨慎使用。
+      summary: 删除本机 Docker 镜像（SSE 任务）
+      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台调用本机 Docker Engine API 删除镜像；最终删除/解绑结果通过任务 done 事件 result 返回。该接口会改变本机 Docker 状态，请谨慎使用。
       tags: [Edge]
       requestBody:
         required: true
@@ -203,49 +207,56 @@ paths:
             schema:
               $ref: '#/components/schemas/RemoveImageRequest'
             example:
-              image: alpine:latest
+              image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
               force: false
               noPrune: false
       responses:
         '200':
-          description: Docker 删除镜像结果
+          description: SSE 任务已创建
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DockerImageRemoveSuccess'
+                $ref: '#/components/schemas/TaskStartSuccess'
               example:
                 code: 1000
                 message: success
                 data:
-                  - untagged: alpine:latest
-                  - deleted: sha256:example
+                  taskId: task_1770000000000000000_12345
+                  taskType: docker_remove_image
+                  status: queued
+                  resourceType: docker_image
+                  resourceId: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
+                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  message: Docker 镜像删除任务已创建
   /api/v1/edge/containers/{id}/start:
     post:
-      summary: 启动本机 Docker 容器
-      description: 调用本机 Docker Engine API 的 /containers/{id}/start。该接口只操作本机 Docker，不写数据库，不需要 nodeId。
+      summary: 启动本机 Docker 容器（SSE 任务）
+      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台调用本机 Docker Engine API 的 /containers/{id}/start。该接口只操作本机 Docker，不写数据库，不需要 nodeId。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/ContainerId'
       responses:
         '200':
-          description: 容器启动结果
+          description: SSE 任务已创建
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContainerActionSuccess'
+                $ref: '#/components/schemas/TaskStartSuccess'
               example:
                 code: 1000
                 message: success
                 data:
-                  containerId: abc123
-                  action: start
-                  status: success
-                  message: ok
-                  checkedAt: 1779956193
+                  taskId: task_1770000000000000000_12345
+                  taskType: docker_container_start
+                  status: queued
+                  resourceType: docker_container
+                  resourceId: abc123
+                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  message: Docker 容器启动任务已创建
   /api/v1/edge/containers/{id}/stop:
     post:
-      summary: 停止本机 Docker 容器
-      description: 调用本机 Docker Engine API 的 /containers/{id}/stop。请求体可为空；不传 timeoutSeconds 时默认等待 10 秒。
+      summary: 停止本机 Docker 容器（SSE 任务）
+      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台调用本机 Docker Engine API 的 /containers/{id}/stop。请求体可为空；不传 timeoutSeconds 时默认等待 10 秒。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/ContainerId'
@@ -259,24 +270,26 @@ paths:
               timeoutSeconds: 10
       responses:
         '200':
-          description: 容器停止结果
+          description: SSE 任务已创建
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContainerActionSuccess'
+                $ref: '#/components/schemas/TaskStartSuccess'
               example:
                 code: 1000
                 message: success
                 data:
-                  containerId: abc123
-                  action: stop
-                  status: success
-                  message: ok
-                  checkedAt: 1779956193
+                  taskId: task_1770000000000000000_12345
+                  taskType: docker_container_stop
+                  status: queued
+                  resourceType: docker_container
+                  resourceId: abc123
+                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  message: Docker 容器停止任务已创建
   /api/v1/edge/containers/{id}/restart:
     post:
-      summary: 重启本机 Docker 容器
-      description: 调用本机 Docker Engine API 的 /containers/{id}/restart。请求体可为空；不传 timeoutSeconds 时默认等待 10 秒。
+      summary: 重启本机 Docker 容器（SSE 任务）
+      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台调用本机 Docker Engine API 的 /containers/{id}/restart。请求体可为空；不传 timeoutSeconds 时默认等待 10 秒。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/ContainerId'
@@ -290,20 +303,58 @@ paths:
               timeoutSeconds: 10
       responses:
         '200':
-          description: 容器重启结果
+          description: SSE 任务已创建
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContainerActionSuccess'
+                $ref: '#/components/schemas/TaskStartSuccess'
               example:
                 code: 1000
                 message: success
                 data:
-                  containerId: abc123
-                  action: restart
-                  status: success
-                  message: ok
-                  checkedAt: 1779956193
+                  taskId: task_1770000000000000000_12345
+                  taskType: docker_container_restart
+                  status: queued
+                  resourceType: docker_container
+                  resourceId: abc123
+                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  message: Docker 容器重启任务已创建
+  /api/v1/edge/tasks/{taskId}:
+    get:
+      summary: 查询边缘任务详情
+      description: 查询 SSE 任务详情。当前任务暂存在内存中，服务重启后不会恢复；它用于 Docker pull/remove、容器 start/stop/restart、浏览器环境 run/stop/delete、running 状态 proxy/proxy-mode 重建等动作接口。
+      tags: [Edge]
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 任务详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeTaskSuccess'
+  /api/v1/edge/tasks/{taskId}/events:
+    get:
+      summary: 订阅边缘任务 SSE 事件（SSE）
+      description: SSE 事件流接口，返回 text/event-stream。会先补发任务历史事件，再推送 queued/running/progress/heartbeat/done/error 等事件；done 事件的 data.result 视具体任务而定。
+      tags: [Edge]
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SSE 事件流
+          content:
+            text/event-stream:
+              schema:
+                type: string
   /api/v1/edge/browser-envs:
     get:
       summary: 查询本机浏览器环境包列表
@@ -403,7 +454,7 @@ paths:
               rpaType: tk
               name: tk-browser-001
               runtime:
-                image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
+                image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
                 startupUrl: about:blank
                 shmSize: 1g
               environment:
@@ -535,7 +586,7 @@ paths:
                   profile:
                     name: tk-browser-001
                     runtime:
-                      image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
+                      image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
                       enableVnc: true
                     ports:
                       cdp: 8101
@@ -581,32 +632,33 @@ paths:
                     vncWsUrl: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
                     webVncUrl: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
     delete:
-      summary: 彻底删除本地浏览器环境包
-      description: 物理删除环境包目录，包括 manifest/profile/binding/proxy/fingerprint/browser-data/profile，删除关联的已停止 Docker 容器，并移除 SQLite browser_envs 索引记录。该操作无法通过 rebuild-index 找回；不会删除浏览器镜像，也不会自动停止 running 容器。如果环境包仍在 running，会返回状态冲突，调用方应先 stop。前端必须在调用前提示用户谨慎操作、删除后无法恢复。
+      summary: 彻底删除本地浏览器环境包（SSE 任务）
+      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台物理删除环境包目录，包括 manifest/profile/binding/proxy/fingerprint/browser-data/profile，删除关联的已停止 Docker 容器，并移除 SQLite browser_envs 索引记录。该操作无法通过 rebuild-index 找回；不会删除浏览器镜像，也不会自动停止 running 容器。如果环境包仍在 running，任务会失败并在 SSE error 事件中返回原因。前端必须在调用前提示用户谨慎操作、删除后无法恢复。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
       responses:
         '200':
-          description: 环境包彻底删除结果
+          description: SSE 任务已创建
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteBrowserEnvSuccess'
+                $ref: '#/components/schemas/TaskStartSuccess'
               example:
                 code: 1000
                 message: success
                 data:
-                  envId: 318275706305908736_tk_918273645001
-                  status: deleted
-                  actionStatus: deleted
-                  message: 环境包已彻底删除，配置文件、browser-data/profile 和关联容器无法找回
-                  deletedAt: 1779957093
-                  updatedAt: 1779957093
+                  taskId: task_1770000000000000000_12345
+                  taskType: browser_env_delete
+                  status: queued
+                  resourceType: browser_env
+                  resourceId: 318275706305908736_tk_918273645001
+                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  message: 浏览器环境删除任务已创建
   /api/v1/edge/browser-envs/{envId}/run:
     post:
-      summary: 启动本地浏览器环境包
-      description: 按 envId 读取本机环境包文件，创建或启动对应 Docker 浏览器容器。镜像、端口、代理、指纹和挂载都来自环境包；该接口不接受 Docker 参数透传。
+      summary: 启动本地浏览器环境包（SSE 任务）
+      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台按 envId 读取本机环境包文件，创建或启动对应 Docker 浏览器容器。镜像、端口、代理、指纹和挂载都来自环境包；该接口不接受 Docker 参数透传。run 内部会等待浏览器/CDP、执行容器内 timezone 探测，必要时二次重建容器，因此必须通过 SSE 观察最终结果。如果 proxy/clash.yaml 启用了 tun.enable=true，创建容器前会检查宿主机 /dev/net/tun；存在时自动追加 NET_ADMIN 和 /dev/net/tun 设备挂载，不存在时不阻断 run，降级依赖 mixed-port + 浏览器代理链路。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -620,33 +672,26 @@ paths:
               forceRecreate: false
       responses:
         '200':
-          description: 环境包运行结果
+          description: SSE 任务已创建。最终 RunBrowserEnvResponse 会出现在任务 done 事件 result 中。
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RunBrowserEnvSuccess'
+                $ref: '#/components/schemas/TaskStartSuccess'
               example:
                 code: 1000
                 message: success
                 data:
-                  envId: 318275706305908736_tk_918273645001
-                  containerId: abc123
-                  containerName: bv-318275706305908736-tk-918273645001
-                  image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
-                  status: running
-                  ports:
-                    cdp: 8101
-                    vnc: 9101
-                  cdpUrl: http://127.0.0.1:8101
-                  vncUrl: vnc://127.0.0.1:9101
-                  dockerApiUrl: http://127.0.0.1:2375
-                  deviceArch: arm64
-                  startedAt: 1779956193
-                  reused: false
+                  taskId: task_1770000000000000000_12345
+                  taskType: browser_env_run
+                  status: queued
+                  resourceType: browser_env
+                  resourceId: 318275706305908736_tk_918273645001
+                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  message: 浏览器环境启动任务已创建
   /api/v1/edge/browser-envs/{envId}/stop:
     post:
-      summary: 停止本地浏览器环境包
-      description: 按 envId 停止环境包对应的本机 Docker 浏览器容器，并同步 container.json、manifest.lastRuntime 和 browser_envs 运行态字段。该接口不删除容器、镜像或 browser-data/profile 登录态目录。
+      summary: 停止本地浏览器环境包（SSE 任务）
+      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台按 envId 停止环境包对应的本机 Docker 浏览器容器，并同步 container.json、manifest.lastRuntime 和 browser_envs 运行态字段。该接口不删除容器、镜像或 browser-data/profile 登录态目录。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -660,27 +705,26 @@ paths:
               timeoutSeconds: 10
       responses:
         '200':
-          description: 环境包停止结果
+          description: SSE 任务已创建。最终 StopBrowserEnvResponse 会出现在任务 done 事件 result 中。
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StopBrowserEnvSuccess'
+                $ref: '#/components/schemas/TaskStartSuccess'
               example:
                 code: 1000
                 message: success
                 data:
-                  envId: 318275706305908736_tk_918273645001
-                  containerId: abc123
-                  containerName: bv-318275706305908736-tk-918273645001
-                  status: stopped
-                  containerStatus: stopped
-                  actionStatus: success
-                  message: ok
-                  stoppedAt: 1779956893
+                  taskId: task_1770000000000000000_12345
+                  taskType: browser_env_stop
+                  status: queued
+                  resourceType: browser_env
+                  resourceId: 318275706305908736_tk_918273645001
+                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  message: 浏览器环境停止任务已创建
   /api/v1/edge/browser-envs/{envId}/backup-package:
     post:
       summary: 备份本地浏览器环境包
-      description: 生成标准 .tar.gz 环境包下载流。该接口不删除源环境包目录、Docker 容器、浏览器镜像或 SQLite 索引；如果环境包仍在 running，会返回状态冲突，调用方应先 stop。
+      description: 非 SSE 接口，仍然直接返回 application/gzip 文件下载流。生成标准 .tar.gz 环境包下载流。该接口不删除源环境包目录、Docker 容器、浏览器镜像或 SQLite 索引；如果环境包仍在 running，会返回状态冲突，调用方应先 stop。文件流任务化需要后续 artifactUrl 方案，不在本次 SSE 改造范围。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -702,7 +746,7 @@ paths:
   /api/v1/edge/browser-envs/{envId}/export-and-remove:
     post:
       summary: 导出并移除本地浏览器环境包
-      description: 生成标准 .tar.gz 环境包下载流；归档生成成功后删除关联的已停止 Docker 容器、源环境包目录和 SQLite 索引。该接口不会自动停止 running 容器，也不会删除浏览器镜像；如果环境包仍在 running，会返回状态冲突，调用方应先 stop。
+      description: 非 SSE 接口，仍然直接返回 application/gzip 文件下载流。生成标准 .tar.gz 环境包下载流；归档生成成功后删除关联的已停止 Docker 容器、源环境包目录和 SQLite 索引。该接口不会自动停止 running 容器，也不会删除浏览器镜像；如果环境包仍在 running，会返回状态冲突，调用方应先 stop。文件流任务化需要后续 artifactUrl 方案，不在本次 SSE 改造范围。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -723,8 +767,8 @@ paths:
           description: 环境包仍在运行中，必须先 stop。
   /api/v1/edge/browser-envs/{envId}/proxy:
     patch:
-      summary: 修改环境包代理配置
-      description: 修改 profile.proxy 与 proxy/clash.yaml，并重算 binding.identityHash。配置不是热更新，只要实际发生变化就需要重新启动容器；如果环境包正在 running，接口会自动 forceRecreate 重建容器，让配置修改对用户无感知。
+      summary: 修改环境包代理配置和运行镜像（SSE 任务）
+      description: 修改 profile.proxy、proxy/clash.yaml，也可以通过 image 修改 profile.runtime.image。代理配置不是热更新，镜像变更也必须重建容器；如果环境包正在 running，接口会快速返回 restartQueued=true、taskId、eventsUrl，并通过 SSE 后台 forceRecreate 重建容器，让配置修改对用户无感知。代理配置变化会重算 binding.identityHash；仅 image 变化不会改变 identityHash。非 running 或未发生变更时不返回 taskId。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -737,6 +781,7 @@ paths:
             example:
               enabled: true
               type: clash-verge
+              image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
               mode: global
               configBase64: bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg==
       responses:
@@ -752,6 +797,7 @@ paths:
                 data:
                   envId: 318275706305908736_tk_318578131780767744
                   status: stopped
+                  image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
                   proxy:
                     enabled: true
                     type: clash-verge
@@ -764,27 +810,14 @@ paths:
                   changed: true
                   restartRequired: false
                   restartQueued: true
+                  taskId: task_1770000000000000000_12345
+                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   restarted: false
-                  run:
-                    envId: 318275706305908736_tk_318578131780767744
-                    containerId: abc123
-                    containerName: bv-318275706305908736-tk-318578131780767744
-                    image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
-                    status: running
-                    ports:
-                      cdp: 8101
-                      vnc: 9101
-                    cdpUrl: http://127.0.0.1:8101
-                    vncUrl: vnc://127.0.0.1:9101
-                    dockerApiUrl: http://127.0.0.1:2375
-                    deviceArch: arm64
-                    startedAt: 1779956993
-                    reused: false
                   updatedAt: 1779956993
   /api/v1/edge/browser-envs/{envId}/proxy-mode:
     patch:
-      summary: 切换 Clash 代理模式
-      description: 只修改 proxy/clash.yaml 顶层 mode 字段，支持 rule/global/direct。该接口属于代理配置修改能力，不是 run 参数；running 环境会自动 forceRecreate，并重新执行容器内 timezone 探测。
+      summary: 切换 Clash 代理模式（SSE 任务）
+      description: 只修改 proxy/clash.yaml 顶层 mode 字段，支持 rule/global/direct。该接口属于代理配置修改能力，不是 run 参数；running 环境会快速返回 restartQueued=true、taskId、eventsUrl，并通过 SSE 后台 forceRecreate，重新执行容器内 timezone 探测。非 running 或未发生变更时不返回 taskId。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -809,6 +842,7 @@ paths:
                 data:
                   envId: 318275706305908736_tk_318578131780767744
                   status: running
+                  image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
                   proxy:
                     enabled: true
                     type: clash-verge
@@ -821,8 +855,39 @@ paths:
                   changed: true
                   restartRequired: false
                   restartQueued: true
+                  taskId: task_1770000000000000000_12345
+                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   restarted: false
                   updatedAt: 1779957993
+  /api/v1/edge/browser-envs/{envId}/cdp-test:
+    get:
+      summary: 测试浏览器环境包 CDP 连通性
+      description: 基础诊断接口，只测试当前 running 环境包的 CDP 端口是否可用。测试步骤包括 /json/version、创建 target、连接 DevTools WebSocket、执行 Runtime.evaluate；不访问 timezone provider，也不判断代理出口。诊断失败时仍可能返回 code=1000，具体失败阶段在 data.stage/error 中。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      responses:
+        '200':
+          description: CDP 诊断结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserEnvCDPTestSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  envId: 318275706305908736_tk_918273645001
+                  cdpPort: 8101
+                  endpoint: http://host.docker.internal:8101/
+                  ok: true
+                  stage: done
+                  browser: Chrome/125.0.0.0
+                  protocolVersion: '1.3'
+                  webSocketUrl: ws://host.docker.internal:8101/devtools/page/ABC
+                  runtimeResult: cdp-ok
+                  testedAt: 1779956993
+                  durationMs: 123
   /api/v1/edge/browser-envs/{envId}/vnc-info:
     get:
       summary: 获取浏览器版 VNC 连接信息
@@ -1035,7 +1100,7 @@ components:
           type: array
           items:
             type: string
-          example: ["crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1"]
+          example: ["crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64"]
         repoDigests:
           type: array
           items:
@@ -1069,7 +1134,7 @@ components:
           example: ["/browser-001"]
         image:
           type: string
-          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
         imageId:
           type: string
           example: sha256:example
@@ -1131,8 +1196,8 @@ components:
       properties:
         image:
           type: string
-          description: 镜像名，支持 alpine:latest 或 registry.example.com/ns/app:tag。
-          example: alpine:latest
+          description: 镜像名，支持完整 registry 地址，例如 crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64。
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
         tag:
           type: string
           description: 可选 tag；如果 image 已经带 tag，可以不传。
@@ -1144,7 +1209,7 @@ components:
         image:
           type: string
           description: 镜像 ID、repo:tag 或 digest。
-          example: alpine:latest
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
         force:
           type: boolean
           description: 是否强制删除。
@@ -1212,7 +1277,7 @@ components:
       properties:
         image:
           type: string
-          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
         startupUrl:
           type: string
           default: about:blank
@@ -1343,7 +1408,7 @@ components:
           example: bv-318275706305908736-tk-918273645001
         image:
           type: string
-          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
         status:
           type: string
           example: running
@@ -1376,6 +1441,49 @@ components:
         reused:
           type: boolean
           example: false
+    BrowserEnvCDPTestResponse:
+      type: object
+      description: CDP 基础诊断结果。ok=false 表示诊断失败，stage/error 会说明失败步骤；环境包不存在或未运行仍按统一错误响应返回。
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        cdpPort:
+          type: integer
+          example: 8101
+        endpoint:
+          type: string
+          description: 边缘服务内部访问 Docker published CDP 端口的 HTTP 地址。
+          example: http://host.docker.internal:8101/
+        ok:
+          type: boolean
+          example: true
+        stage:
+          type: string
+          description: 当前诊断阶段；失败时用于定位卡在哪一步。
+          enum: [start, http_version, create_target, websocket, runtime_enable, runtime_evaluate, done]
+          example: done
+        browser:
+          type: string
+          example: Chrome/125.0.0.0
+        protocolVersion:
+          type: string
+          example: '1.3'
+        webSocketUrl:
+          type: string
+          example: ws://host.docker.internal:8101/devtools/page/ABC
+        runtimeResult:
+          type: string
+          example: cdp-ok
+        error:
+          type: string
+          example: cdp websocket dial failed
+        testedAt:
+          type: integer
+          example: 1779956993
+        durationMs:
+          type: integer
+          example: 123
     StopBrowserEnvRequest:
       type: object
       properties:
@@ -1466,9 +1574,100 @@ components:
         importedAt:
           type: integer
           example: 1779957193
+    EdgeTask:
+      type: object
+      description: 边缘任务详情。第一版任务保存在内存中，主要用于 Docker pull/remove、容器 start/stop/restart、浏览器环境 run/stop/delete、running 状态 proxy/proxy-mode 后台重建试点。
+      properties:
+        taskId:
+          type: string
+          example: task_1770000000000000000_12345
+        taskType:
+          type: string
+          example: browser_env_proxy_update
+        status:
+          type: string
+          enum: [queued, running, success, failed]
+          example: running
+        resourceType:
+          type: string
+          example: browser_env
+        resourceId:
+          type: string
+          example: 318275706305908736_tk_318578131780767744
+        message:
+          type: string
+          example: 浏览器容器重建仍在执行
+        lastError:
+          type: string
+          example: timezone probe timeout
+        result:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: integer
+          example: 1779957993
+        updatedAt:
+          type: integer
+          example: 1779958000
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/EdgeTaskEvent'
+    EdgeTaskEvent:
+      type: object
+      properties:
+        taskId:
+          type: string
+          example: task_1770000000000000000_12345
+        event:
+          type: string
+          enum: [queued, running, progress, heartbeat, done, error]
+          example: heartbeat
+        status:
+          type: string
+          enum: [queued, running, success, failed]
+          example: running
+        stage:
+          type: string
+          example: container_recreate
+        message:
+          type: string
+          example: 浏览器容器重建仍在执行
+        data:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: integer
+          example: 1779958000
+    TaskStartResponse:
+      type: object
+      description: SSE 任务化接口的快速响应。前端需要再订阅 eventsUrl 获取最终结果。
+      properties:
+        taskId:
+          type: string
+          example: task_1770000000000000000_12345
+        taskType:
+          type: string
+          example: browser_env_run
+        status:
+          type: string
+          enum: [queued, running, success, failed]
+          example: queued
+        resourceType:
+          type: string
+          example: browser_env
+        resourceId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        eventsUrl:
+          type: string
+          example: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+        message:
+          type: string
+          example: 浏览器环境启动任务已创建
     UpdateBrowserEnvProxyRequest:
       type: object
-      description: PATCH 语义的代理配置请求。代理 YAML 必须通过 configBase64 传入，服务端解码后写入 proxy/clash.yaml。
+      description: PATCH 语义的代理配置与运行镜像请求。代理 YAML 必须通过 configBase64 传入，服务端解码后写入 proxy/clash.yaml；image 写入 profile.runtime.image。
       properties:
         enabled:
           type: boolean
@@ -1477,6 +1676,10 @@ components:
           type: string
           description: 第一版仅支持 clash-verge。
           example: clash-verge
+        image:
+          type: string
+          description: 可选。浏览器环境包下一次 run 使用的 Docker 镜像；running 环境实际变化后会后台重建容器。
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
         mode:
           type: string
           enum: [rule, global, direct]
@@ -1504,6 +1707,9 @@ components:
         status:
           type: string
           example: stopped
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
         proxy:
           $ref: '#/components/schemas/BrowserEnvProxyDetail'
         bindingVersion:
@@ -1523,6 +1729,14 @@ components:
           type: boolean
           description: 运行态修改时为 true，表示后端已把 forceRecreate 放入后台队列，接口不等待 Docker 重建和 timezone provider。
           example: true
+        taskId:
+          type: string
+          description: PATCH proxy 运行态任务化试点返回的后台任务 ID；非 running 或未发生变更时为空。
+          example: task_1770000000000000000_12345
+        eventsUrl:
+          type: string
+          description: 任务 SSE 事件流地址，前端可用 EventSource 或 curl -N 订阅。
+          example: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
         restarted:
           type: boolean
           description: 是否已由边缘服务在当前 HTTP 请求内同步完成容器重建；PATCH proxy 运行态通常返回 restartQueued=true、restarted=false。
@@ -1800,7 +2014,7 @@ components:
       properties:
         untagged:
           type: string
-          example: alpine:latest
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
         deleted:
           type: string
           example: sha256:example
@@ -1836,31 +2050,20 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/DockerContainer'
-    DockerPullEventsSuccess:
+    EdgeTaskSuccess:
       allOf:
         - $ref: '#/components/schemas/StandardSuccess'
         - type: object
           properties:
             data:
-              type: array
-              items:
-                $ref: '#/components/schemas/DockerPullEvent'
-    DockerImageRemoveSuccess:
+              $ref: '#/components/schemas/EdgeTask'
+    TaskStartSuccess:
       allOf:
         - $ref: '#/components/schemas/StandardSuccess'
         - type: object
           properties:
             data:
-              type: array
-              items:
-                $ref: '#/components/schemas/DockerImageRemoveResult'
-    ContainerActionSuccess:
-      allOf:
-        - $ref: '#/components/schemas/StandardSuccess'
-        - type: object
-          properties:
-            data:
-              $ref: '#/components/schemas/ContainerActionResult'
+              $ref: '#/components/schemas/TaskStartResponse'
     CreateBrowserEnvSuccess:
       allOf:
         - $ref: '#/components/schemas/StandardSuccess'
@@ -1882,27 +2085,6 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/BrowserEnvDetailResponse'
-    RunBrowserEnvSuccess:
-      allOf:
-        - $ref: '#/components/schemas/StandardSuccess'
-        - type: object
-          properties:
-            data:
-              $ref: '#/components/schemas/RunBrowserEnvResponse'
-    StopBrowserEnvSuccess:
-      allOf:
-        - $ref: '#/components/schemas/StandardSuccess'
-        - type: object
-          properties:
-            data:
-              $ref: '#/components/schemas/StopBrowserEnvResponse'
-    DeleteBrowserEnvSuccess:
-      allOf:
-        - $ref: '#/components/schemas/StandardSuccess'
-        - type: object
-          properties:
-            data:
-              $ref: '#/components/schemas/DeleteBrowserEnvResponse'
     ImportBrowserEnvPackageSuccess:
       allOf:
         - $ref: '#/components/schemas/StandardSuccess'
@@ -1917,6 +2099,13 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/UpdateBrowserEnvProxyResponse'
+    BrowserEnvCDPTestSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BrowserEnvCDPTestResponse'
     BrowserEnvVNCInfoSuccess:
       allOf:
         - $ref: '#/components/schemas/StandardSuccess'

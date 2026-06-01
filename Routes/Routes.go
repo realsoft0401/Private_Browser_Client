@@ -10,6 +10,7 @@ import (
 
 	BrowserEnvService "private_browser_client/Service/BrowserEnv"
 	EdgeService "private_browser_client/Service/Edge"
+	TaskService "private_browser_client/Service/Task"
 	"private_browser_client/Settings"
 )
 
@@ -53,6 +54,8 @@ func Setup() *gin.Engine {
 	edge.POST("/containers/:id/start", EdgeService.StartDockerContainer)
 	edge.POST("/containers/:id/stop", EdgeService.StopDockerContainer)
 	edge.POST("/containers/:id/restart", EdgeService.RestartDockerContainer)
+	edge.GET("/tasks/:taskId", TaskService.GetEdgeTask)
+	edge.GET("/tasks/:taskId/events", TaskService.StreamEdgeTaskEvents)
 	edge.GET("/browser-envs", BrowserEnvService.ListBrowserEnvs)
 	edge.POST("/browser-envs", BrowserEnvService.CreateBrowserEnv)
 	edge.POST("/browser-envs/import-package", BrowserEnvService.ImportBrowserEnvPackage)
@@ -64,6 +67,7 @@ func Setup() *gin.Engine {
 	edge.DELETE("/browser-envs/:envId", BrowserEnvService.DeleteBrowserEnv)
 	edge.PATCH("/browser-envs/:envId/proxy", BrowserEnvService.UpdateBrowserEnvProxy)
 	edge.PATCH("/browser-envs/:envId/proxy-mode", BrowserEnvService.UpdateBrowserEnvProxyMode)
+	edge.GET("/browser-envs/:envId/cdp-test", BrowserEnvService.TestBrowserEnvCDP)
 	edge.GET("/browser-envs/:envId/vnc-info", BrowserEnvService.GetBrowserEnvVNCInfo)
 	edge.GET("/browser-envs/:envId/vnc/ws", BrowserEnvService.ProxyBrowserEnvVNC)
 

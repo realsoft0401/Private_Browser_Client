@@ -330,7 +330,7 @@ type cdpTarget struct {
 }
 
 func createCDPTarget(cdpPort int) (*cdpTarget, error) {
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d/json/new?%s", cdpPort, url.QueryEscape("about:blank"))
+	endpoint := publishedCDPHTTPURLForService(cdpPort, "/json/new?"+url.QueryEscape("about:blank"))
 	req, err := http.NewRequest(http.MethodPut, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -351,6 +351,7 @@ func createCDPTarget(cdpPort int) (*cdpTarget, error) {
 	if strings.TrimSpace(target.WebSocketDebuggerURL) == "" {
 		return nil, fmt.Errorf("cdp websocket url is empty")
 	}
+	target.WebSocketDebuggerURL = rewriteCDPWebSocketURLForService(target.WebSocketDebuggerURL, cdpPort)
 	return target, nil
 }
 
@@ -359,7 +360,7 @@ func closeCDPTarget(cdpPort int, targetID string) {
 	if targetID == "" {
 		return
 	}
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/json/close/%s", cdpPort, url.PathEscape(targetID)), nil)
+	req, err := http.NewRequest(http.MethodGet, publishedCDPHTTPURLForService(cdpPort, "/json/close/"+url.PathEscape(targetID)), nil)
 	if err != nil {
 		return
 	}
