@@ -723,7 +723,7 @@ paths:
                   message: 浏览器环境停止任务已创建
   /api/v1/edge/browser-envs/{envId}/backup:
     post:
-      summary: 备份本地浏览器环境包
+      summary: 备份并清理本地浏览器环境包
       description: 备份是状态变化动作：生成标准 .tar.gz 备份包到 data/browser-envs/users/{userId}/{rpaType}/，校验成功后删除关联的已停止 Docker 容器和 browser-envs 源环境目录，并把 SQLite 索引保留为 backed_up 资产状态。该接口不会删除浏览器镜像，不会删除 SQLite 索引，也不会自动停止 running 容器；running 时返回 409。
       tags: [Edge]
       parameters:

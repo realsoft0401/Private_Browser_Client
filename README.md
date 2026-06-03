@@ -113,7 +113,7 @@ main.go
 | GET | `/api/v1/edge/browser-envs/:envId` | 查询单个环境包详情，不返回代理明文和指纹 raw |
 | POST | `/api/v1/edge/browser-envs/:envId/run` | SSE 任务：按环境包创建或启动本机浏览器容器 |
 | POST | `/api/v1/edge/browser-envs/:envId/stop` | SSE 任务：按环境包停止本机浏览器容器，并同步运行态 |
-| POST | `/api/v1/edge/browser-envs/:envId/backup` | 备份环境包：生成 tar.gz 后删除本机容器和环境目录，SQLite 索引保留为 `backed_up` |
+| POST | `/api/v1/edge/browser-envs/:envId/backup` | 备份并清理环境包：生成 tar.gz 后删除本机容器和环境目录，SQLite 索引保留为 `backed_up` |
 | POST | `/api/v1/edge/browser-envs/:envId/restore` | 从本机备份包恢复环境目录，恢复后可继续 run |
 | DELETE | `/api/v1/edge/browser-envs/:envId` | SSE 任务：彻底删除环境包，删除配置目录、登录态目录、已停止容器和 SQLite 索引 |
 | PATCH | `/api/v1/edge/browser-envs/:envId/proxy` | running 时返回 SSE 任务：修改环境包代理配置，变更后重建容器 |
@@ -631,7 +631,9 @@ curl 'http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/cdp-test'
 
 ### CDP 命令接口规划
 
-后续可以考虑新增统一的 CDP 命令接口，让 RPA 流程通过边缘服务下发受控命令，而不是让前端直接连接浏览器 CDP 端口。这个方向可以简化前端调用，也方便后端统一记录日志、控制超时、处理容器化部署下的 CDP 地址和 Host 头问题。
+当前已经落地的是 `cdp-test` 诊断接口；通用 CDP 命令接口尚未实现。后续 TikTok 发视频这类 RPA 会涉及文件上传、DOM 操作和等待页面状态，确实需要一条受控执行通道，因此该接口应排在 TikTok 业务自动化之前落地，而不是等到业务接口内部临时拼接 CDP。
+
+统一 CDP 命令接口让 RPA 流程通过边缘服务下发受控命令，而不是让前端直接连接浏览器 CDP 端口。这个方向可以简化前端调用，也方便后端统一记录日志、控制超时、处理容器化部署下的 CDP 地址和 Host 头问题。
 
 建议接口方向：
 
@@ -697,6 +699,8 @@ curl 'http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/vnc-info'
 ```
 
 返回里的 `webVncUrl` 可以直接在浏览器打开。Mac 原生 VNC 客户端如果弹密码框，可以不用它，改用该浏览器页面。
+
+VNC 端口映射是宿主 `910x` 到容器内固定 `5900`。`profile.ports.vnc` 和 SQLite `vnc_port` 保存的是宿主发布端口；浏览器镜像里的 `x11vnc` 仍监听 `VNC_PORT=5900`，不同环境包之间的隔离由 Docker `PortBindings` 完成。
 
 容器化部署 Private_Browser_Client 时，VNC / CDP 不能在服务内部固定访问 `127.0.0.1`。浏览器容器的 `810x/910x` 端口是发布在 Docker 宿主机上的；服务容器里的 `127.0.0.1` 只代表服务容器自己。当前实现会根据 `Settings/config-docker.yaml` 里的 `docker.api_url` 自动选择发布端口访问主机，例如 `http://host.docker.internal:2375` 会让 noVNC 代理和 rule 模式 timezone CDP 探测访问 `host.docker.internal:910x/810x`。如果这里配错，典型现象是：
 

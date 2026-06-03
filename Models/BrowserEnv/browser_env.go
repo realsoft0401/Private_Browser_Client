@@ -375,7 +375,7 @@ type UpdateBrowserEnvProxyRequest struct {
 	//
 	// 设计来源：
 	// - 用户实测长 YAML 通过 JSON 字符串传输时容易被 Apifox/前端截断或转义出错；
-	// - 旧容器启动链路本来就使用 CLASH_VERGE_CONFIG_BASE64 传入代理配置；
+	// - 浏览器镜像正式使用 MIHOMO_CONFIG_BASE64 传入代理配置，旧 CLASH_VERGE_CONFIG_BASE64 仅由 entrypoint 临时兼容；
 	// - 因此修改接口也改为优先接收 configBase64，后端解码后再写入 proxy/clash.yaml。
 	ConfigBase64 *string `json:"configBase64"`
 }

@@ -25,6 +25,7 @@ import (
 )
 
 const containerCDPPort = 9222
+const containerVNCPort = 5900
 const timezoneRecreateLimit = 3
 const hostTunDevicePath = "/dev/net/tun"
 
@@ -284,7 +285,7 @@ func buildDockerCreateConfig(pkg *runPackage) (*edgeModel.DockerContainerCreateC
 	}
 	browserDataPath := filepath.Join(pkg.AbsoluteEnvPath, filepath.FromSlash(pkg.Binding.Storage.HostUserDataDir))
 	cdpKey := dockerPortKey(containerCDPPort)
-	vncKey := dockerPortKey(pkg.Profile.Ports.VNC)
+	vncKey := dockerPortKey(containerVNCPort)
 	exposedPorts := map[string]struct{}{
 		cdpKey: {},
 		vncKey: {},
@@ -348,12 +349,17 @@ func buildDockerCreateConfig(pkg *runPackage) (*edgeModel.DockerContainerCreateC
 
 // buildContainerEnv 生成容器启动环境变量。
 //
-// 这些变量对应 Private_Browser_Control 镜像 entrypoint 里已经验证过的启动参数；
+// 这些变量对应 Private_Browser_Edge_AMD64/ARM 镜像 entrypoint 里已经验证过的启动参数；
 // 第一版只从环境包转换，不允许调用方在 run 请求里覆盖，避免前后端状态不一致。
 //
 // runtimeProxyConfig 是本次容器实际注入的代理配置。它通常等于 pkg.ProxyConfig；
 // 但当模板启用了 tun 而宿主机没有 /dev/net/tun 时，run 会临时把注入配置里的 tun.enable 改成 false，
 // 避免镜像入口脚本直接退出，同时不改写环境包磁盘上的 proxy/clash.yaml。
+//
+// 端口边界也在这里固定：
+// - profile.ports.vnc 是宿主机发布端口，按 9100 + envSequence 分配；
+// - 容器内 x11vnc 固定监听 5900，不随宿主端口变化；
+// - Docker PortBindings 负责 910x:5900，不能把 VNC_PORT 注入成宿主端口。
 func buildContainerEnv(pkg *runPackage, runtimeProxyConfig string) ([]string, error) {
 	envValues := []string{
 		"TZ=" + pkg.Profile.Environment.Timezone,
@@ -365,12 +371,12 @@ func buildContainerEnv(pkg *runPackage, runtimeProxyConfig string) ([]string, er
 		"USER_DATA_DIR=" + pkg.Binding.Storage.ContainerUserDataDir,
 		"START_URL=" + pkg.Profile.Runtime.StartupURL,
 		"ENABLE_VNC=" + strconv.FormatBool(pkg.Profile.Runtime.EnableVNC),
-		"VNC_PORT=" + strconv.Itoa(pkg.Profile.Ports.VNC),
+		"VNC_PORT=" + strconv.Itoa(containerVNCPort),
 	}
 	if pkg.Profile.Proxy.Enabled {
 		envValues = append(envValues,
-			"ENABLE_CLASH_VERGE=true",
-			"CLASH_VERGE_CONFIG_BASE64="+base64.StdEncoding.EncodeToString([]byte(runtimeProxyConfig)),
+			"ENABLE_PROXY=true",
+			"MIHOMO_CONFIG_BASE64="+base64.StdEncoding.EncodeToString([]byte(runtimeProxyConfig)),
 		)
 	}
 	runtimeConfig := strings.TrimSpace(string(pkg.RuntimeConfigRaw))
@@ -660,7 +666,7 @@ func detectClashTunEnabled(configText string) (bool, error) {
 // 设计来源：
 //   - 当前代理模板普遍带 `tun.enable=true`，但 Mac / Docker Desktop 常常没有可挂载的 /dev/net/tun；
 //   - 浏览器镜像入口脚本会主动拒绝 “tun.enable=true 但无 TUN 设备” 的组合；
-//   - 因此边缘服务在无 TUN 节点上做运行时降级：注入容器的 CLASH_VERGE_CONFIG_BASE64 使用 tun.enable=false，
+//   - 因此边缘服务在无 TUN 节点上做运行时降级：注入容器的 MIHOMO_CONFIG_BASE64 使用 tun.enable=false，
 //     让 mixed-port + 浏览器代理链路先跑通；磁盘上的 proxy/clash.yaml 保持原样，便于迁移到 Linux 节点后自动恢复 TUN。
 //
 // 职责边界：

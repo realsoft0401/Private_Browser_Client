@@ -78,7 +78,7 @@ func Close() error {
 // - env_sequence：本机递增序号，是 cdp/vnc 端口规则来源，迁移到别的设备后允许重排；
 // - cdp_port / vnc_port：本机端口索引，第一版按 8100/9100 + envSequence 生成；
 // - env_path：环境包相对路径，数据库只存索引，不保存 profile、代理 YAML、指纹原文和浏览器数据；
-// - status：环境包生命周期状态，支持 created/running/stopped/deleted/archived/error；
+// - status：环境包生命周期状态，支持 created/running/stopped/backed_up/deleted/archived/error；
 // - container_*：最近一次 Docker 容器运行快照，真实容器状态仍以 Docker 为最终来源；
 // - monitor_status / last_error：后续本机监控与上报使用，不在创建环境包时伪造运行状态；
 // - backup_*：RPA 执行后只保留 tar.gz 备份时的资产索引，备份包仍放在受控 data/browser-envs/users/{userId}/{rpaType}/ 目录；
