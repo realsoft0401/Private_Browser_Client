@@ -115,7 +115,6 @@ main.go
 | POST | `/api/v1/edge/browser-envs/:envId/stop` | SSE 任务：按环境包停止本机浏览器容器，并同步运行态 |
 | POST | `/api/v1/edge/browser-envs/:envId/backup` | 备份环境包：生成 tar.gz 后删除本机容器和环境目录，SQLite 索引保留为 `backed_up` |
 | POST | `/api/v1/edge/browser-envs/:envId/restore` | 从本机备份包恢复环境目录，恢复后可继续 run |
-| POST | `/api/v1/edge/browser-envs/:envId/export-and-remove` | 历史导出并移除接口，后续由“备份 + 下载”流程替代 |
 | DELETE | `/api/v1/edge/browser-envs/:envId` | SSE 任务：彻底删除环境包，删除配置目录、登录态目录、已停止容器和 SQLite 索引 |
 | PATCH | `/api/v1/edge/browser-envs/:envId/proxy` | running 时返回 SSE 任务：修改环境包代理配置，变更后重建容器 |
 | PATCH | `/api/v1/edge/browser-envs/:envId/proxy-mode` | running 时返回 SSE 任务：切换 Clash 规则/全局/直连模式并自动重建 |
@@ -402,12 +401,7 @@ backed_up/archived
   -> 状态仍然是 backed_up/archived
 ```
 
-下载示例：
-
-```bash
-curl -X GET http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/backup/download \
-  -o {envId}-backup.tar.gz
-```
+当前版本还没有公开 `backup/download` HTTP 接口。备份接口会把受控备份包路径、checksum、大小和备份时间写入 SQLite，下载能力应在后续 artifact/download 方案里补齐，不能恢复旧的“临时打包下载流”语义。
 
 恢复示例：
 
@@ -417,15 +411,14 @@ curl -X POST http://127.0.0.1:3300/api/v1/edge/browser-envs/{envId}/restore
 
 `restore` 会从 SQLite 索引里的 `backupPath` 读取本机备份包，校验 checksum 后恢复 `browser-envs/{envId}` 目录，并把容器运行态重置为 `created`。它不会自动启动 Docker；恢复成功后再调用 `run` 执行 RPA。
 
-后续推荐接口命名：
+当前已落地接口：
 
 ```text
 POST /api/v1/edge/browser-envs/{envId}/backup
-GET  /api/v1/edge/browser-envs/{envId}/backup/download
 POST /api/v1/edge/browser-envs/{envId}/restore
 ```
 
-历史 `export-and-remove` 接口语义和“备份 + 下载”模型冲突，后续不应作为新前端主流程。兼容期内如果保留，也应该内部走备份模型：先生成/复用备份包，再返回下载；是否删除备份资产或索引必须由用户通过独立删除动作确认。
+历史 `backup-package` 和 `export-and-remove` 接口语义已经被移除。后续如果要做下载，只能读取 `backup` 生成并登记过的备份包；如果要释放或删除备份资产，必须走独立删除动作，不能在下载接口里附带删除。
 
 这里需要特别注意下载类接口的删除时机：下载失败不应影响备份状态。后续更稳的实现方向是 artifact 两阶段：
 
@@ -546,16 +539,15 @@ DELETE /api/v1/edge/browser-envs/:envId
 
 `PATCH /api/v1/edge/browser-envs/:envId/proxy` 和 `PATCH /api/v1/edge/browser-envs/:envId/proxy-mode` 是条件任务化：只有环境包正在 `running` 且配置实际变化时，才会返回 `restartQueued=true + taskId + eventsUrl`；非运行态只标记下次 run 生效。
 
-备份、下载、导入当前仍是文件类接口，不应按普通同步接口长期保留：
+备份、恢复、导入当前仍是文件类接口，不应按普通同步接口长期保留：
 
 ```text
 POST /api/v1/edge/browser-envs/:envId/backup
 POST /api/v1/edge/browser-envs/:envId/restore
-GET  /api/v1/edge/browser-envs/:envId/backup/download   // 后续推荐
 POST /api/v1/edge/browser-envs/import-package
 ```
 
-原因是备份生成包后会删除当前节点上的源环境包和已停止容器，但 SQLite 索引会保留为 `backed_up/archived` 资产状态。下载只读取已有备份包，不改变状态；导入/恢复再把备份包还原成可运行环境。
+原因是备份生成包后会删除当前节点上的源环境包和已停止容器，但 SQLite 索引会保留为 `backed_up/archived` 资产状态。后续下载只应读取已有备份包，不改变状态；导入/恢复再把备份包还原成可运行环境。
 
 后续实现应优先改成 artifact 任务模型：HTTP 请求只创建备份任务，SSE 负责报告打包、校验、删除容器、删除源环境目录、更新 SQLite 资产状态的进度，任务完成后返回 `artifactUrl` 或备份包下载地址。`import-package` 是上传恢复动作，可以先继续保持 multipart 同步接口；如果后续导入包变大或需要显示校验进度，再单独任务化。
 

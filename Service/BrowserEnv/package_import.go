@@ -20,10 +20,10 @@ import (
 
 const maxImportPackageBytes = 20 << 30
 
-// ImportBrowserEnvPackage 导入备份或迁移导出的环境包。
+// ImportBrowserEnvPackage 导入标准 tar.gz 环境包。
 //
 // 设计来源：
-// - 用户把 import 放在 backup/export 之后，要求导入基于真实包格式，而不是另造一套 JSON 协议；
+// - 用户把 import 放在 backup 之后，要求导入基于边缘服务真实生成的包格式，而不是另造一套 JSON 协议；
 // - envId 属于账号环境身份，第一版导入默认保留原 envId；如果本机已存在同名环境包，直接拒绝；
 // - envSequence、CDP/VNC 端口和容器运行态属于本机资源，导入时必须重新分配并重置。
 //

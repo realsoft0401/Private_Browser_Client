@@ -64,7 +64,6 @@ func Setup() *gin.Engine {
 	edge.POST("/browser-envs/:envId/stop", BrowserEnvService.StopBrowserEnv)
 	edge.POST("/browser-envs/:envId/backup", BrowserEnvService.BackupBrowserEnv)
 	edge.POST("/browser-envs/:envId/restore", BrowserEnvService.RestoreBrowserEnv)
-	edge.POST("/browser-envs/:envId/export-and-remove", BrowserEnvService.ExportAndRemoveBrowserEnvPackage)
 	edge.DELETE("/browser-envs/:envId", BrowserEnvService.DeleteBrowserEnv)
 	edge.PATCH("/browser-envs/:envId/proxy", BrowserEnvService.UpdateBrowserEnvProxy)
 	edge.PATCH("/browser-envs/:envId/proxy-mode", BrowserEnvService.UpdateBrowserEnvProxyMode)

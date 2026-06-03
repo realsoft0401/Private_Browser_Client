@@ -6,6 +6,7 @@ data/
 
 # 本机 Go 构建缓存和编译产物，只用于开发加速，不能进入仓库。
 .tmp/
+.gocache/
 private_browser_client
 dist/
 

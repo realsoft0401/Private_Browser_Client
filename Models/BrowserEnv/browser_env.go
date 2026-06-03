@@ -750,8 +750,9 @@ type ManifestFile struct {
 	UpdatedAt      int64                 `json:"updatedAt"`
 }
 
-// ManifestExportSource 记录环境包导出来源。
+// ManifestExportSource 记录环境包来源。
 //
+// 字段名沿用早期 export 协议，当前公开接口已经收敛为 backup/restore。
 // 这些字段只写入 staging 副本，用于后续 import-package 审计包从哪里来；
 // 它们不是账号环境稳定身份，不能参与 identityHash。
 type ManifestExportSource struct {

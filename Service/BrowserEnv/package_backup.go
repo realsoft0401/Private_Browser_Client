@@ -150,9 +150,10 @@ func requirePackageDir(envPath string, relativePath string) error {
 	return nil
 }
 
-// writeExportManifest 只修改 staging manifest，写入导出协议元信息和文件校验和。
+// writeExportManifest 只修改 staging manifest，写入包协议元信息和文件校验和。
 //
-// 源环境包不能被污染；exportAction 也不参与 identityHash，只用于后续导入审计。
+// 这些字段沿用早期 export 命名是为了兼容已落盘的包协议；当前公开接口已经收敛为 backup/restore。
+// 源环境包不能被污染；exportAction 不参与 identityHash，只用于后续导入审计。
 func writeExportManifest(stagingEnvPath string, manifest model.ManifestFile, exportAction string) error {
 	now := time.Now().Unix()
 	packageVersion := browserEnvPackageVersion
@@ -226,7 +227,8 @@ func fileSHA256(path string) (string, error) {
 
 // copyDirectory 把源环境包复制到 staging。
 //
-// 备份和迁移导出都必须基于 staging 副本写导出元信息，不能污染源目录。
+// 备份必须基于 staging 副本写包元信息，不能污染源目录；restore/import 也复用这个
+// 文件复制能力，所以这里只做文件系统复制，不承载任何业务状态变化。
 func copyDirectory(source string, target string) error {
 	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {

@@ -115,23 +115,6 @@ func RestoreBrowserEnv(c *gin.Context) {
 	HttpResponse.ResponseSuccess(c, result)
 }
 
-// ExportAndRemoveBrowserEnvPackage 导出环境包并从本机移除源环境。
-//
-// 这条接口用于迁移场景：下载包生成成功后，Service 会删除已停止容器、环境包目录和 SQLite 索引；
-// 前端必须在调用前提示用户“导出后本机不再保留该环境包”。
-func ExportAndRemoveBrowserEnvPackage(c *gin.Context) {
-	result, err := NewService().ExportAndRemoveBrowserEnvPackage(c.Param("envId"))
-	if err != nil {
-		writeBrowserEnvError(c, err)
-		return
-	}
-	if result.Cleanup != nil {
-		defer result.Cleanup()
-	}
-	c.Header("Content-Type", "application/gzip")
-	c.FileAttachment(result.FilePath, result.FileName)
-}
-
 // ImportBrowserEnvPackage 从 tar.gz 包导入本机环境包。
 //
 // HTTP 层只负责接收 multipart 文件；包结构校验、checksum、路径安全、端口重分配和索引落库都在 Service 层完成。
