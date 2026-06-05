@@ -196,8 +196,13 @@ func loadRunPackage(index *model.BrowserEnvIndex) (*runPackage, error) {
 	}
 
 	browserDataPath := filepath.Join(absoluteEnvPath, filepath.FromSlash(pkg.Binding.Storage.HostUserDataDir))
-	if err := os.MkdirAll(browserDataPath, 0755); err != nil {
-		return nil, fmt.Errorf("创建 browser-data/profile 失败: %w", err)
+	if stat, err := os.Stat(browserDataPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("browser-data/profile 不存在，环境包核心登录态资产缺失，不能自动创建")
+		}
+		return nil, fmt.Errorf("读取 browser-data/profile 失败: %w", err)
+	} else if !stat.IsDir() {
+		return nil, fmt.Errorf("browser-data/profile 不是目录")
 	}
 	if pkg.Profile.Proxy.Enabled {
 		proxyPath := filepath.Join(absoluteEnvPath, filepath.FromSlash(pkg.Profile.Proxy.ConfigPath))
@@ -237,8 +242,7 @@ func validateRunPackage(pkg *runPackage) error {
 		strings.TrimSpace(pkg.Binding.Storage.ContainerUserDataDir) == "" {
 		return fmt.Errorf("binding.storage 不能为空")
 	}
-	proxyHash := buildTextHash(pkg.ProxyConfig)
-	identity := buildBindingIdentityFromProfile(pkg.Manifest.UserID, pkg.Profile, pkg.Manifest.Paths, proxyHash)
+	identity := buildBindingIdentityFromFacts(pkg.Manifest.EnvID, pkg.Manifest.UserID, pkg.Manifest.RPAType)
 	identityHash, err := buildJSONHash(identity)
 	if err != nil {
 		return fmt.Errorf("重新计算 identityHash 失败: %w", err)
@@ -249,26 +253,15 @@ func validateRunPackage(pkg *runPackage) error {
 	return nil
 }
 
-// buildBindingIdentityFromProfile 使用 profile 重建 identityHash 来源结构。
+// buildBindingIdentityFromFacts 使用环境包稳定事实重建 identityHash 来源结构。
 //
-// 创建环境包和 run 前校验必须使用同一套稳定字段：
-// userId/rpaType/timezone/language/screen/proxyConfigHash/browserDataPath。
-// 端口、容器 ID、Docker API、设备架构不允许进入 identityHash。
-func buildBindingIdentityFromProfile(userID string, profile model.ProfileFile, paths model.ManifestPaths, proxyConfigHash string) model.BindingIdentity {
+// 当前 identityHash 只做 envId/userId/rpaType 一致性摘要。
+// timezone、language、screen、proxy、browserDataPath、端口、设备和容器都不参与身份计算。
+func buildBindingIdentityFromFacts(envID string, userID string, rpaType string) model.BindingIdentity {
 	return model.BindingIdentity{
-		UserID:   userID,
-		RPAType:  profile.RPAType,
-		Timezone: profile.Environment.Timezone,
-		Language: profile.Environment.Language,
-		Screen: model.BindingIdentityScreen{
-			Width:  profile.Environment.Screen.Width,
-			Height: profile.Environment.Screen.Height,
-		},
-		Proxy: model.BindingIdentityProxy{
-			Type:       profile.Proxy.Type,
-			ConfigHash: proxyConfigHash,
-		},
-		BrowserDataPath: paths.BrowserData,
+		EnvID:   envID,
+		UserID:  userID,
+		RPAType: rpaType,
 	}
 }
 
@@ -327,10 +320,7 @@ func buildDockerCreateConfig(pkg *runPackage) (*edgeModel.DockerContainerCreateC
 				},
 			}
 		} else {
-			runtimeProxyConfig, err = disableClashTunForRuntime(pkg.ProxyConfig)
-			if err != nil {
-				return nil, err
-			}
+			return nil, fmt.Errorf("proxy/clash.yaml 启用了 tun.enable=true，但宿主机缺少 %s；请为 Client/浏览器容器提供 NET_ADMIN 和 /dev/net/tun，或在配置中显式关闭 TUN 后重新提交代理配置，不能静默降级为非 TUN 运行", hostTunDevicePath)
 		}
 	}
 	envValues, err := buildContainerEnv(pkg, runtimeProxyConfig)
@@ -505,6 +495,9 @@ func finalizeRunPackage(edge *edgeService.Service, pkg *runPackage, deviceInfo *
 		if probeResult != nil && probeResult.ProbeFailed {
 			timezoneStatus = "failed"
 			timezoneError = probeResult.Error
+			message := "timezone/代理出口探测失败，容器可能仍在 running，但环境因网络指纹未确认不可用: " + timezoneError
+			_ = updateRunErrorWithRuntime(pkg, message, containerID)
+			return nil, remoteError(message)
 		}
 		if probeResult != nil && probeResult.NeedsContainerRecreate {
 			if remainingTimezoneRecreates <= 0 {

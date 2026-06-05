@@ -152,7 +152,6 @@ type CreateBrowserEnvResponse struct {
 	EnvPath      string            `json:"envPath"`
 	Files        map[string]string `json:"files"`
 	IdentityHash string            `json:"identityHash"`
-	ConfigHash   string            `json:"configHash"`
 	CreatedAt    int64             `json:"createdAt"`
 }
 
@@ -392,7 +391,7 @@ type UpdateBrowserEnvProxyModeRequest struct {
 
 // UpdateBrowserEnvProxyResponse 是代理配置修改后的摘要。
 //
-// 响应不返回代理正文，只返回 hash、大小和 binding 版本，避免接口把代理敏感内容反吐给前端。
+// 响应不返回代理正文，只返回大小和 binding 版本，避免接口把代理敏感内容反吐给前端。
 type UpdateBrowserEnvProxyResponse struct {
 	EnvID           string                `json:"envId"`
 	Status          string                `json:"status"`
@@ -480,7 +479,6 @@ type BrowserEnvBindingDetail struct {
 	Version           int                `json:"version"`
 	Locked            bool               `json:"locked"`
 	IdentityHash      string             `json:"identityHash"`
-	ConfigHash        string             `json:"configHash"`
 	Identity          BindingIdentity    `json:"identity"`
 	Storage           BindingStorage     `json:"storage"`
 	SessionState      BindingSession     `json:"sessionState"`
@@ -492,14 +490,13 @@ type BrowserEnvBindingDetail struct {
 
 // BrowserEnvProxyDetail 是代理详情摘要。
 //
-// configHash 用于判断代理配置是否变化；configSizeBytes 便于前端展示文件是否为空。
+// configSizeBytes 便于前端展示文件是否为空。
 // 这里明确不返回代理配置正文，后续如果要编辑代理，应走专门的代理修改接口。
 type BrowserEnvProxyDetail struct {
 	Enabled         bool             `json:"enabled"`
 	Type            string           `json:"type"`
 	Mode            string           `json:"mode,omitempty"`
 	ConfigPath      string           `json:"configPath"`
-	ConfigHash      string           `json:"configHash"`
 	ConfigSizeBytes int              `json:"configSizeBytes"`
 	Runtime         ProxyRuntimeFile `json:"runtime"`
 }
@@ -845,7 +842,6 @@ type BindingFile struct {
 	Version           int                `json:"version"`
 	Locked            bool               `json:"locked"`
 	IdentityHash      string             `json:"identityHash"`
-	ConfigHash        string             `json:"configHash"`
 	Identity          BindingIdentity    `json:"identity"`
 	Storage           BindingStorage     `json:"storage"`
 	SessionState      BindingSession     `json:"sessionState"`
@@ -856,24 +852,13 @@ type BindingFile struct {
 }
 
 // BindingIdentity 是 identityHash 的来源结构。
+//
+// 当前身份摘要只用于确认环境包稳定身份，用户已经明确 timezone、language、screen、
+// proxy、browserDataPath 和运行位置都不参与身份计算。
 type BindingIdentity struct {
-	UserID          string                `json:"userId"`
-	RPAType         string                `json:"rpaType"`
-	Timezone        string                `json:"timezone"`
-	Language        string                `json:"language"`
-	Screen          BindingIdentityScreen `json:"screen"`
-	Proxy           BindingIdentityProxy  `json:"proxy"`
-	BrowserDataPath string                `json:"browserDataPath"`
-}
-
-type BindingIdentityScreen struct {
-	Width  int `json:"width"`
-	Height int `json:"height"`
-}
-
-type BindingIdentityProxy struct {
-	Type       string `json:"type"`
-	ConfigHash string `json:"configHash"`
+	EnvID   string `json:"envId"`
+	UserID  string `json:"userId"`
+	RPAType string `json:"rpaType"`
 }
 
 type BindingStorage struct {
@@ -903,7 +888,11 @@ type RuntimeProtection struct {
 	ExitIPChanged       *bool  `json:"exitIpChanged"`
 	HighRisk            *bool  `json:"highRisk"`
 	LastCheckedAt       *int64 `json:"lastCheckedAt"`
+	LastVerifiedAt      *int64 `json:"lastVerifiedAt,omitempty"`
 	TimezoneStatus      string `json:"timezoneStatus,omitempty"`
+	RiskStatus          string `json:"riskStatus,omitempty"`
+	AvailabilityStatus  string `json:"availabilityStatus,omitempty"`
+	LastError           string `json:"lastError,omitempty"`
 }
 
 // ContainerFile 是 container.json 的落盘结构。

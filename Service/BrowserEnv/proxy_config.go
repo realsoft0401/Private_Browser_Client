@@ -442,9 +442,8 @@ func decodeProxyConfigBase64(raw string) (string, error) {
 
 // finalizeProxyUpdate 写入代理配置和运行镜像修改。
 //
-// 代理 hash 参与账号环境身份，修改代理后必须递增 binding.version 并重算 identityHash；
-// image 只影响 Docker create 的镜像选择，不参与 identityHash，因此仅 image 变化时只写 profile/manifest；
-// 但 browser-data/profile 仍然保留，是否继续使用该登录态由业务策略和后续风控检查决定。
+// 代理和镜像都不参与 identityHash。代理变更只会递增 binding.version，
+// 并把 runtimeProtection/proxyRuntime 重置为 pending，等待下一次 run 重新做网络指纹确认。
 func finalizeProxyUpdate(pkg *proxyConfigPackage, update *normalizedProxyUpdate) (*model.UpdateBrowserEnvProxyResponse, error) {
 	now := time.Now().Unix()
 	pkg.Profile.Proxy.Enabled = update.Enabled
@@ -458,17 +457,11 @@ func finalizeProxyUpdate(pkg *proxyConfigPackage, update *normalizedProxyUpdate)
 	pkg.Profile.Metadata.UpdatedAt = now
 
 	if update.ProxyChanged {
-		proxyHash := buildTextHash(update.Config)
-		identity := buildBindingIdentityFromProfile(pkg.Manifest.UserID, pkg.Profile, pkg.Manifest.Paths, proxyHash)
-		identityHash, err := buildJSONHash(identity)
-		if err != nil {
-			return nil, internalError(fmt.Sprintf("计算 identityHash 失败: %v", err))
-		}
 		pkg.Binding.Version++
-		pkg.Binding.Identity = identity
-		pkg.Binding.IdentityHash = identityHash
-		pkg.Binding.ConfigHash = identityHash
 		pkg.Binding.RuntimeProtection.TimezoneStatus = "pending"
+		pkg.Binding.RuntimeProtection.RiskStatus = "pending"
+		pkg.Binding.RuntimeProtection.AvailabilityStatus = "pending"
+		pkg.Binding.RuntimeProtection.LastError = ""
 		pkg.Binding.UpdatedAt = now
 	}
 	pkg.Manifest.UpdatedAt = now
@@ -551,7 +544,6 @@ func buildProxyUpdateResponse(envID string, status string, binding model.Binding
 			Type:            profile.Proxy.Type,
 			Mode:            effectiveClashMode(config, profile.Proxy.Enabled, profile.Proxy.Type),
 			ConfigPath:      profile.Proxy.ConfigPath,
-			ConfigHash:      buildTextHash(config),
 			ConfigSizeBytes: len([]byte(config)),
 		},
 		BindingVersion:  binding.Version,

@@ -33,6 +33,7 @@ type AppConfig struct {
 	*ServerConfig     `mapstructure:"server"`
 	*DockerConfig     `mapstructure:"docker"`
 	*StatusSyncConfig `mapstructure:"status_sync"`
+	*DiscoveryConfig  `mapstructure:"discovery"`
 }
 
 // ServerConfig 描述当前 Go 边缘服务自身的监听参数。
@@ -72,6 +73,29 @@ type StatusSyncConfig struct {
 	StaleSeconds    int  `mapstructure:"stale_seconds"`
 }
 
+// DiscoveryConfig 描述 Client 在独立内网中的 UDP 服务发现广播。
+//
+// 设计来源：
+// - 用户希望 Server 可以自动扫描内网并加入 Client，也可以手动添加；
+// - 用户进一步确认 UDP 广播必须有唯一识别口径，不能把内网里所有 UDP 包都抓来当节点；
+// - 当前收窄后不再使用 clientInstanceId，Client IP 是连接位置，nodeId 由中心服务发放。
+//
+// 职责边界：
+// - 只广播本 Client 的服务位置、协议版本、分组和基础能力；
+// - 不广播用户、环境包、代理、指纹、登录态或宿主机敏感环境变量；
+// - IP 变化时由 Server 发现不一致后提示人工更新，不由 Client 自动覆盖中心节点身份。
+type DiscoveryConfig struct {
+	Enabled          bool   `mapstructure:"enabled"`
+	BroadcastAddress string `mapstructure:"broadcast_address"`
+	Port             int    `mapstructure:"port"`
+	IntervalSeconds  int    `mapstructure:"interval_seconds"`
+	Magic            string `mapstructure:"magic"`
+	ProtocolVersion  int    `mapstructure:"protocol_version"`
+	Group            string `mapstructure:"group"`
+	AdvertiseHost    string `mapstructure:"advertise_host"`
+	AdvertiseBaseURL string `mapstructure:"advertise_base_url"`
+}
+
 // Init 负责加载当前运行环境的配置文件。
 //
 // 这个配置入口的来历：
@@ -97,6 +121,13 @@ func Init(projectRoot string) error {
 	configEngine.SetDefault("status_sync.interval_seconds", 5)
 	configEngine.SetDefault("status_sync.watchdog_seconds", 15)
 	configEngine.SetDefault("status_sync.stale_seconds", 30)
+	configEngine.SetDefault("discovery.enabled", true)
+	configEngine.SetDefault("discovery.broadcast_address", "255.255.255.255")
+	configEngine.SetDefault("discovery.port", 43000)
+	configEngine.SetDefault("discovery.interval_seconds", 5)
+	configEngine.SetDefault("discovery.magic", "PRIVATE_BROWSER_CLIENT_DISCOVERY")
+	configEngine.SetDefault("discovery.protocol_version", 1)
+	configEngine.SetDefault("discovery.group", "default")
 
 	if err := configEngine.ReadInConfig(); err != nil {
 		return fmt.Errorf("read config failed: %w", err)
@@ -117,7 +148,11 @@ func Init(projectRoot string) error {
 	if Conf.StatusSyncConfig == nil {
 		Conf.StatusSyncConfig = &StatusSyncConfig{}
 	}
+	if Conf.DiscoveryConfig == nil {
+		Conf.DiscoveryConfig = &DiscoveryConfig{}
+	}
 	normalizeStatusSyncConfig(Conf.StatusSyncConfig)
+	normalizeDiscoveryConfig(Conf.DiscoveryConfig)
 
 	configEngine.WatchConfig()
 	// 这里保留热加载，是因为配置文件在本地开发和部署阶段都可能被手动修改。
@@ -140,7 +175,11 @@ func Init(projectRoot string) error {
 		if updated.StatusSyncConfig == nil {
 			updated.StatusSyncConfig = &StatusSyncConfig{}
 		}
+		if updated.DiscoveryConfig == nil {
+			updated.DiscoveryConfig = &DiscoveryConfig{}
+		}
 		normalizeStatusSyncConfig(updated.StatusSyncConfig)
+		normalizeDiscoveryConfig(updated.DiscoveryConfig)
 		Conf = updated
 		fmt.Printf("config reloaded: %s\n", event.Name)
 	})
@@ -174,6 +213,37 @@ func normalizeStatusSyncConfig(config *StatusSyncConfig) {
 	minStale := config.WatchdogSeconds * 2
 	if config.StaleSeconds < minStale {
 		config.StaleSeconds = minStale
+	}
+}
+
+// normalizeDiscoveryConfig 收敛 UDP discovery 配置。
+//
+// 这里给出明确默认值，是为了让 Server 自动发现时有稳定协议识别符；
+// magic/group/protocolVersion 是过滤依据，不承担认证职责，Client 仍依赖内网隔离和上游访问控制。
+func normalizeDiscoveryConfig(config *DiscoveryConfig) {
+	if config == nil {
+		return
+	}
+	if strings.TrimSpace(config.BroadcastAddress) == "" {
+		config.BroadcastAddress = "255.255.255.255"
+	}
+	if config.Port <= 0 {
+		config.Port = 43000
+	}
+	if config.IntervalSeconds <= 0 {
+		config.IntervalSeconds = 5
+	}
+	if config.IntervalSeconds < 3 {
+		config.IntervalSeconds = 3
+	}
+	if strings.TrimSpace(config.Magic) == "" {
+		config.Magic = "PRIVATE_BROWSER_CLIENT_DISCOVERY"
+	}
+	if config.ProtocolVersion <= 0 {
+		config.ProtocolVersion = 1
+	}
+	if strings.TrimSpace(config.Group) == "" {
+		config.Group = "default"
 	}
 }
 

@@ -197,7 +197,6 @@ func readProxyDetail(envPath string, profile model.ProfileFile, paths model.Mani
 			proxyConfigText = string(bytes)
 			proxyConfigExists = true
 			detail.ConfigPath = configPath
-			detail.ConfigHash = buildTextHash(proxyConfigText)
 			detail.ConfigSizeBytes = len(bytes)
 			detail.Mode = effectiveClashMode(proxyConfigText, profile.Proxy.Enabled, profile.Proxy.Type)
 		} else if !os.IsNotExist(err) {
@@ -320,8 +319,7 @@ func buildDetailConsistency(index *model.BrowserEnvIndex, envPath string, manife
 	if binding.Identity.UserID != manifest.UserID || binding.Identity.RPAType != manifest.RPAType {
 		result.Errors = append(result.Errors, "binding 与 manifest 不一致")
 	}
-	proxyHash := buildTextHash(proxyConfigText)
-	identity := buildBindingIdentityFromProfile(manifest.UserID, profile, manifest.Paths, proxyHash)
+	identity := buildBindingIdentityFromFacts(manifest.EnvID, manifest.UserID, manifest.RPAType)
 	identityHash, err := buildJSONHash(identity)
 	if err != nil {
 		result.Errors = append(result.Errors, "重新计算 identityHash 失败: "+err.Error())
@@ -351,7 +349,6 @@ func toBindingDetail(binding model.BindingFile) model.BrowserEnvBindingDetail {
 		Version:           binding.Version,
 		Locked:            binding.Locked,
 		IdentityHash:      binding.IdentityHash,
-		ConfigHash:        binding.ConfigHash,
 		Identity:          binding.Identity,
 		Storage:           binding.Storage,
 		SessionState:      binding.SessionState,

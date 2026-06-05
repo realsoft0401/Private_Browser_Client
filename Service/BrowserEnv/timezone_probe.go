@@ -604,20 +604,12 @@ func writeTimezoneProbeSuccess(pkg *runPackage, result *timezoneProbeResult) (bo
 
 	pkg.Profile.Environment.Timezone = result.Timezone
 	pkg.Profile.Metadata.UpdatedAt = now
-	proxyHash := buildTextHash(pkg.ProxyConfig)
-	identity := buildBindingIdentityFromProfile(pkg.Manifest.UserID, pkg.Profile, pkg.Manifest.Paths, proxyHash)
-	identityHash, err := buildJSONHash(identity)
-	if err != nil {
-		return false, fmt.Errorf("计算 timezone identityHash 失败: %w", err)
-	}
-	if identityHash != pkg.Binding.IdentityHash {
-		pkg.Binding.Version++
-	}
-	pkg.Binding.Identity = identity
-	pkg.Binding.IdentityHash = identityHash
-	pkg.Binding.ConfigHash = identityHash
 	pkg.Binding.RuntimeProtection.TimezoneStatus = "verified"
 	pkg.Binding.RuntimeProtection.LastCheckedAt = &now
+	pkg.Binding.RuntimeProtection.LastVerifiedAt = &now
+	pkg.Binding.RuntimeProtection.RiskStatus = "ok"
+	pkg.Binding.RuntimeProtection.AvailabilityStatus = "available"
+	pkg.Binding.RuntimeProtection.LastError = ""
 	if timezoneChanged {
 		pkg.Binding.RuntimeProtection.RuntimeDrift = boolPtr(true)
 	}
@@ -636,13 +628,13 @@ func writeTimezoneProbeSuccess(pkg *runPackage, result *timezoneProbeResult) (bo
 		Attempts:  result.Attempts,
 		Drift:     timezoneChanged,
 	}
-	if err = writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.Profile, pkg.Profile); err != nil {
+	if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.Profile, pkg.Profile); err != nil {
 		return false, err
 	}
-	if err = writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.Binding, pkg.Binding); err != nil {
+	if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.Binding, pkg.Binding); err != nil {
 		return false, err
 	}
-	if err = writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.ProxyRuntime, runtime); err != nil {
+	if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.ProxyRuntime, runtime); err != nil {
 		return false, err
 	}
 	return timezoneChanged, writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, "manifest.json"), pkg.Manifest)
@@ -663,6 +655,9 @@ func writeTimezoneProbeFailed(pkg *runPackage, message string, attempts []model.
 	}
 	pkg.Binding.RuntimeProtection.TimezoneStatus = "failed"
 	pkg.Binding.RuntimeProtection.LastCheckedAt = &now
+	pkg.Binding.RuntimeProtection.RiskStatus = "highRisk"
+	pkg.Binding.RuntimeProtection.AvailabilityStatus = "unavailable"
+	pkg.Binding.RuntimeProtection.LastError = truncateRunError(message)
 	pkg.Binding.UpdatedAt = now
 	_ = writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.ProxyRuntime, runtime)
 	return writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.Binding, pkg.Binding)

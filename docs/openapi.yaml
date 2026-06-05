@@ -22,11 +22,29 @@ paths:
                 $ref: '#/components/schemas/HealthResponse'
               example:
                 ok: true
+                status: healthy
                 service: private-browser-client
                 mode: dev
-                version: 0.1.0
+                version: 0.1.7
                 configFile: /path/to/Settings/config-dev.yaml
                 dockerApi: http://127.0.0.1:2375
+                checkedAt: 1779956198
+                checks:
+                  api:
+                    status: healthy
+                    message: http 服务可响应
+                  sqlite:
+                    status: healthy
+                    message: SQLite 可用
+                  docker:
+                    status: healthy
+                    message: Docker 可用，arch=arm64，containers=11，images=25
+                  dataDir:
+                    status: healthy
+                    message: data 目录可访问
+                  statusSync:
+                    status: healthy
+                    message: 状态同步 Worker 正常
                 statusSync:
                   enabled: true
                   workerRunning: true
@@ -503,7 +521,6 @@ paths:
                     fingerprintRuntimeConfig: fingerprint/runtime-config.json
                     browserData: browser-data/profile
                   identityHash: sha256:xxx
-                  configHash: sha256:xxx
                   createdAt: 1779956193
   /api/v1/edge/browser-envs/import-package:
     post:
@@ -596,12 +613,10 @@ paths:
                     version: 1
                     locked: false
                     identityHash: sha256:xxx
-                    configHash: sha256:xxx
                   proxy:
                     enabled: true
                     type: clash-verge
                     configPath: proxy/clash.yaml
-                    configHash: sha256:xxx
                     configSizeBytes: 27
                   fingerprint:
                     snapshot:
@@ -756,7 +771,7 @@ paths:
   /api/v1/edge/browser-envs/{envId}/proxy:
     patch:
       summary: 修改环境包代理配置和运行镜像（SSE 任务）
-      description: 修改 profile.proxy、proxy/clash.yaml，也可以通过 image 修改 profile.runtime.image。代理配置不是热更新，镜像变更也必须重建容器；如果环境包正在 running，接口会快速返回 restartQueued=true、taskId、eventsUrl，并通过 SSE 后台 forceRecreate 重建容器，让配置修改对用户无感知。代理配置变化会重算 binding.identityHash；仅 image 变化不会改变 identityHash。非 running 或未发生变更时不返回 taskId。
+      description: 修改 profile.proxy、proxy/clash.yaml，也可以通过 image 修改 profile.runtime.image。代理配置不是热更新，镜像变更也必须重建容器；如果环境包正在 running，接口会快速返回 restartQueued=true、taskId、eventsUrl，并通过 SSE 后台 forceRecreate 重建容器，让配置修改对用户无感知。代理配置变化会递增 binding.version 并把 runtimeProtection 重置为 pending，不改变 identityHash，也不再返回配置摘要字段。非 running 或未发生变更时不返回 taskId。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -791,7 +806,6 @@ paths:
                     type: clash-verge
                     mode: global
                     configPath: proxy/clash.yaml
-                    configHash: sha256:775d8817bed8ec4f5275d2aaff66103d5490c665f9b85cafc6194cf463dcb595
                     configSizeBytes: 28
                   bindingVersion: 2
                   identityHash: sha256:c9439c86977482fa3b18e76696ad6428c61756970b9fc166afcb0fc75ef5cccb
@@ -836,7 +850,6 @@ paths:
                     type: clash-verge
                     mode: global
                     configPath: proxy/clash.yaml
-                    configHash: sha256:xxx
                     configSizeBytes: 4421
                   bindingVersion: 11
                   identityHash: sha256:xxx
@@ -924,6 +937,10 @@ components:
         ok:
           type: boolean
           example: true
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+          example: healthy
         service:
           type: string
           example: private-browser-client
@@ -932,15 +949,36 @@ components:
           example: dev
         version:
           type: string
-          example: 0.1.0
+          example: 0.1.7
         configFile:
           type: string
           example: /path/to/Settings/config-dev.yaml
         dockerApi:
           type: string
           example: http://127.0.0.1:2375
+        checkedAt:
+          type: integer
+          example: 1779956198
+        deviceInfo:
+          allOf:
+            - $ref: '#/components/schemas/DeviceInfo'
+          nullable: true
+        checks:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/HealthCheckResult'
         statusSync:
           $ref: '#/components/schemas/StatusSyncSnapshot'
+    HealthCheckResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+          example: healthy
+        message:
+          type: string
+          example: SQLite 可用
     StatusSyncSnapshot:
       type: object
       description: 后台浏览器环境状态同步任务健康快照。哨兵只重启同步 Worker，不重启浏览器容器。
@@ -1357,9 +1395,6 @@ components:
           additionalProperties:
             type: string
         identityHash:
-          type: string
-          example: sha256:xxx
-        configHash:
           type: string
           example: sha256:xxx
         createdAt:
@@ -1861,9 +1896,6 @@ components:
         configPath:
           type: string
           example: proxy/clash.yaml
-        configHash:
-          type: string
-          example: sha256:xxx
         configSizeBytes:
           type: integer
           example: 27

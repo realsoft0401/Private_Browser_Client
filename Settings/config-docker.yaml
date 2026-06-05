@@ -13,3 +13,13 @@ status_sync:
   interval_seconds: 5
   watchdog_seconds: 15
   stale_seconds: 30
+discovery:
+  enabled: true
+  broadcast_address: 255.255.255.255
+  port: 43000
+  interval_seconds: 5
+  magic: PRIVATE_BROWSER_CLIENT_DISCOVERY
+  protocol_version: 1
+  group: default
+  advertise_host: ""
+  advertise_base_url: ""

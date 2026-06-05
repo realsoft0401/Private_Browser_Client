@@ -15,6 +15,7 @@ import (
 	"private_browser_client/Infrastructures/SQLite"
 	"private_browser_client/Routes"
 	BrowserEnvService "private_browser_client/Service/BrowserEnv"
+	DiscoveryService "private_browser_client/Service/Discovery"
 	"private_browser_client/Settings"
 )
 
@@ -36,7 +37,9 @@ func Init(projectRoot string) error {
 		return err
 	}
 	BrowserEnvService.StartStatusSyncManager()
+	DiscoveryService.StartBroadcaster()
 	defer func() {
+		DiscoveryService.StopBroadcaster()
 		BrowserEnvService.StopStatusSyncManager()
 		if err := SQLite.Close(); err != nil {
 			log.Printf("close sqlite failed: %v\n", err)

@@ -121,7 +121,6 @@ func buildBindingFile(ctx *createContext) model.BindingFile {
 		Version:      1,
 		Locked:       false,
 		IdentityHash: ctx.IdentityHash,
-		ConfigHash:   ctx.ConfigHash,
 		Identity:     ctx.Identity,
 		Storage: model.BindingStorage{
 			ContainerUserDataDir: model.DefaultContainerUserDataDir,
@@ -139,7 +138,9 @@ func buildBindingFile(ctx *createContext) model.BindingFile {
 			Restored:          false,
 		},
 		RuntimeProtection: model.RuntimeProtection{
-			TimezoneStatus: "pending",
+			TimezoneStatus:     "pending",
+			RiskStatus:         "pending",
+			AvailabilityStatus: "pending",
 		},
 		CreatedAt: ctx.Now,
 		UpdatedAt: ctx.Now,

@@ -10,6 +10,7 @@ import (
 
 	BrowserEnvService "private_browser_client/Service/BrowserEnv"
 	EdgeService "private_browser_client/Service/Edge"
+	HealthService "private_browser_client/Service/Health"
 	TaskService "private_browser_client/Service/Task"
 	"private_browser_client/Settings"
 )
@@ -27,15 +28,7 @@ func Setup() *gin.Engine {
 	})
 
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"ok":         true,
-			"service":    Settings.Conf.Name,
-			"mode":       Settings.Conf.Mode,
-			"version":    Settings.Conf.Version,
-			"configFile": Settings.Conf.ConfigFile,
-			"dockerApi":  Settings.Conf.DockerConfig.APIURL,
-			"statusSync": BrowserEnvService.StatusSyncSnapshot(),
-		})
+		c.JSON(http.StatusOK, HealthService.BuildHealthResponse())
 	})
 	registerSwaggerDocs(r)
 	r.GET("/web-vnc.html", BrowserEnvService.WebVNCPage)

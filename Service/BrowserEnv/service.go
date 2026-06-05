@@ -43,10 +43,8 @@ type createContext struct {
 	Paths           model.ManifestPaths
 	RelativeEnvPath string
 	AbsoluteEnvPath string
-	ProxyConfigHash string
 	Identity        model.BindingIdentity
 	IdentityHash    string
-	ConfigHash      string
 }
 
 // CreateBrowserEnv 创建一个本地浏览器环境包。
@@ -235,13 +233,11 @@ func newCreateContext(param *model.CreateBrowserEnvRequest) (*createContext, err
 	}
 	ctx.AbsoluteEnvPath = filepath.Join(Settings.Conf.ProjectRoot, filepath.FromSlash(ctx.RelativeEnvPath))
 
-	ctx.ProxyConfigHash = buildTextHash(param.Proxy.Config)
-	ctx.Identity = buildBindingIdentity(param, paths, ctx.ProxyConfigHash)
+	ctx.Identity = buildBindingIdentity(ctx.EnvID, param)
 	ctx.IdentityHash, err = buildJSONHash(ctx.Identity)
 	if err != nil {
 		return nil, internalError(fmt.Sprintf("计算 identityHash 失败: %v", err))
 	}
-	ctx.ConfigHash = ctx.IdentityHash
 	return ctx, nil
 }
 
@@ -258,25 +254,10 @@ func buildPorts(envSequence int) model.BrowserEnvPorts {
 
 // buildBindingIdentity 组装参与 identityHash 的稳定身份字段。
 //
-// 维护约束：
-// - 这里只放 userId、rpaType、时区、语言、屏幕、代理配置 hash 和 browserData 相对路径；
-// - 不允许加入 deviceId、containerId、端口、Docker API、lastRuntime 等运行位置字段。
-func buildBindingIdentity(param *model.CreateBrowserEnvRequest, paths model.ManifestPaths, proxyConfigHash string) model.BindingIdentity {
-	return model.BindingIdentity{
-		UserID:   param.UserID,
-		RPAType:  param.RPAType,
-		Timezone: param.Environment.Timezone,
-		Language: param.Environment.Language,
-		Screen: model.BindingIdentityScreen{
-			Width:  param.Environment.Screen.Width,
-			Height: param.Environment.Screen.Height,
-		},
-		Proxy: model.BindingIdentityProxy{
-			Type:       param.Proxy.Type,
-			ConfigHash: proxyConfigHash,
-		},
-		BrowserDataPath: paths.BrowserData,
-	}
+// 用户已经明确 identityHash 只做 envId/userId/rpaType 的一致性摘要；
+// timezone、language、screen、proxy、browserDataPath、端口和运行位置都不参与身份计算。
+func buildBindingIdentity(envID string, param *model.CreateBrowserEnvRequest) model.BindingIdentity {
+	return buildBindingIdentityFromFacts(envID, param.UserID, param.RPAType)
 }
 
 // ensureEnvPathAvailable 防止覆盖已有环境包。
@@ -319,7 +300,6 @@ func buildCreateResponse(ctx *createContext) *model.CreateBrowserEnvResponse {
 			"browserData":              ctx.Paths.BrowserData,
 		},
 		IdentityHash: ctx.IdentityHash,
-		ConfigHash:   ctx.ConfigHash,
 		CreatedAt:    ctx.Now,
 	}
 }

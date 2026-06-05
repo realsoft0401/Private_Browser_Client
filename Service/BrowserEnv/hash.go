@@ -9,7 +9,7 @@ import (
 
 // buildTextHash 计算普通文本字段的 sha256。
 //
-// 当前主要用于 proxy.configHash。这里会统一 CRLF 和首尾空白，
+// 当前主要用于代理配置摘要或排障比较，不参与 identityHash。这里会统一 CRLF 和首尾空白，
 // 避免同一份 Clash YAML 因换行格式不同产生不同 hash。
 func buildTextHash(value string) string {
 	normalized := strings.TrimSpace(strings.ReplaceAll(value, "\r\n", "\n"))
@@ -22,8 +22,8 @@ func buildTextHash(value string) string {
 
 // buildJSONHash 计算结构化对象的 sha256。
 //
-// identityHash/configHash 必须从结构化模型计算，而不是手工拼字符串。
-// 这样字段来源更清晰，也能避免拼接顺序遗漏导致同一环境算出不同身份。
+// identityHash 必须从结构化模型计算，而不是手工拼字符串。
+// 当前 identityHash 只包含 envId/userId/rpaType，避免配置变化误伤环境身份。
 func buildJSONHash(value any) (string, error) {
 	bytes, err := json.Marshal(value)
 	if err != nil {
