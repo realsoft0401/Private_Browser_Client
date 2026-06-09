@@ -183,6 +183,9 @@ func (r *Repository) UpdateBrowserEnvRuntime(ctx context.Context, update *model.
 	}
 	result, err := r.db.ExecContext(ctx, `UPDATE browser_envs SET
 		status = ?,
+		env_sequence = COALESCE(?, env_sequence),
+		cdp_port = COALESCE(?, cdp_port),
+		vnc_port = COALESCE(?, vnc_port),
 		container_id = ?,
 		container_name = ?,
 		container_status = ?,
@@ -194,6 +197,9 @@ func (r *Repository) UpdateBrowserEnvRuntime(ctx context.Context, update *model.
 		last_checked_at = ?
 		WHERE env_id = ?`,
 		update.Status,
+		update.EnvSequence,
+		update.CDPPort,
+		update.VNCPort,
 		update.ContainerID,
 		update.ContainerName,
 		update.ContainerStatus,
@@ -269,6 +275,9 @@ func (r *Repository) UpdateBrowserEnvBackupState(ctx context.Context, update *mo
 	}
 	result, err := r.db.ExecContext(ctx, `UPDATE browser_envs SET
 		status = ?,
+		env_sequence = COALESCE(?, env_sequence),
+		cdp_port = COALESCE(?, cdp_port),
+		vnc_port = COALESCE(?, vnc_port),
 		container_id = ?,
 		container_status = ?,
 		monitor_status = ?,
@@ -283,6 +292,9 @@ func (r *Repository) UpdateBrowserEnvBackupState(ctx context.Context, update *mo
 		updated_at = ?
 		WHERE env_id = ?`,
 		update.Status,
+		update.EnvSequence,
+		update.CDPPort,
+		update.VNCPort,
 		update.ContainerID,
 		update.ContainerStatus,
 		update.MonitorStatus,

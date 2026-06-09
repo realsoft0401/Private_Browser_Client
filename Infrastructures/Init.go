@@ -47,12 +47,10 @@ func Init(projectRoot string) error {
 	}()
 	options := buildServerOptions()
 
-	// 这是用户明确提出的开发期约束：每次重新启动服务前，都先按监听端口执行一次 `lsof`，
-	// 如果发现旧进程还占着端口，就直接杀掉，避免开发时反复手工查 PID 再 kill。
-	// 这里的职责是“清理当前端口占用”，不负责做通用进程管理；后续如果进入生产环境，
-	// 应优先把这段逻辑收敛到开发模式开关内，不要无差别地对所有环境都强制 kill 端口占用进程。
-	if err := releaseOccupiedPort(options.port); err != nil {
-		return fmt.Errorf("release occupied port failed: %w", err)
+	// Edge Client 后期没有开发/测试/生产运行模式，所以启动阶段不能再为了本地便利自动 kill 旧进程。
+	// 端口被占用时直接失败，并给出 lsof/kill 排查方向，由管理员或测试人员明确处理。
+	if err := ensurePortAvailable(options.port); err != nil {
+		return err
 	}
 
 	server := newHTTPServer(options)
@@ -150,18 +148,18 @@ func shutdownHTTPServer(server *http.Server) error {
 	return nil
 }
 
-// releaseOccupiedPort 按端口查找当前监听进程，并在存在占用时直接结束它。
+// ensurePortAvailable 按端口查找当前 LISTEN 进程，并在存在占用时明确失败。
 //
-// 这段实现的来历不是通用最佳实践，而是当前项目的开发约定：
-// - 用户已经明确要求“每次关闭后，重新启动前都按端口 lsof 一次，再 kill”；
-// - 所以这里直接复用系统命令，把原本手工执行的排障动作前置为启动前自清理；
-// - 后续如果要细分环境，至少要保留这个需求在 dev 场景成立，不要又退回手工查端口的旧流程。
-func releaseOccupiedPort(port int) error {
-	// 这里只释放真正处于 LISTEN 的服务进程。
+// 设计来源：
+// - 用户确认 Edge Client 后期全部按生产口径运行，不再区分开发/测试/生产模式；
+// - 因此服务启动不能因为本地测试方便而自动 kill 其它进程，避免商业节点误伤同端口服务；
+// - 这里只做可执行的错误提示：指出哪个端口被哪些 PID 占用，并给出管理员排查命令。
+func ensurePortAvailable(port int) error {
+	// 这里只检查真正处于 LISTEN 的服务进程。
 	//
 	// 历史问题：早期使用 `lsof -ti tcp:端口` 会把“连接过这个端口的客户端进程”也列出来，
-	// 例如 Codex 内置网络进程访问过 3300 后也可能被误判为占用者，导致启动阶段尝试 kill 无关进程。
-	// 当前边缘服务只需要清理旧的监听服务，所以必须加 `-sTCP:LISTEN` 收紧范围。
+	// 例如 Codex 内置网络进程访问过 3300 后也可能被误判为占用者。
+	// 当前边缘服务只关心是否已有监听进程，所以必须加 `-sTCP:LISTEN` 收紧范围。
 	listCmd := exec.Command("lsof", "-tiTCP:"+fmt.Sprintf("%d", port), "-sTCP:LISTEN")
 	output, err := listCmd.Output()
 	if err != nil {
@@ -173,15 +171,20 @@ func releaseOccupiedPort(port int) error {
 
 	pids := strings.Fields(strings.TrimSpace(string(output)))
 	currentPID := fmt.Sprintf("%d", os.Getpid())
+	occupied := make([]string, 0, len(pids))
 	for _, pid := range pids {
 		if pid == "" || pid == currentPID {
 			continue
 		}
-		killCmd := exec.Command("kill", "-9", pid)
-		if killErr := killCmd.Run(); killErr != nil {
-			return fmt.Errorf("kill pid %s failed: %w", pid, killErr)
-		}
-		log.Printf("killed process on port %d, pid=%s\n", port, pid)
+		occupied = append(occupied, pid)
+	}
+	if len(occupied) > 0 {
+		return fmt.Errorf(
+			"端口 %d 已被进程占用，Client 不能启动；影响范围：http 服务无法监听 3300，Swagger/health/edge API 都不可用；解决方式：先执行 `lsof -nP -iTCP:%d -sTCP:LISTEN` 确认 PID，再由管理员明确停止旧服务，例如 `kill <pid>` 或 `docker rm -f <container>`；本服务不会自动 kill 进程，避免误伤商业节点。占用 PID=%s",
+			port,
+			port,
+			strings.Join(occupied, ","),
+		)
 	}
 	return nil
 }

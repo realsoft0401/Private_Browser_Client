@@ -543,7 +543,7 @@ func applyProjectContainerMetadata(container *edgeModel.DockerContainer) bool {
 // isBrowserEnvContainer 识别由本项目创建的浏览器环境容器。
 //
 // 新容器使用 `bv.project=private-browser-client` + `bv.role=browser-env`；
-// 为了让当前测试环境里的旧容器不丢失，也兼容 `bv.envId` 和 `bv-` 名称前缀。
+// 为了让历史旧容器不丢失，也兼容 `bv.envId` 和 `bv-` 名称前缀。
 func isBrowserEnvContainer(container *edgeModel.DockerContainer) bool {
 	labels := container.Labels
 	if labels["bv.project"] == "private-browser-client" && labels["bv.role"] == "browser-env" {

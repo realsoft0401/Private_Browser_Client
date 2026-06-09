@@ -96,12 +96,12 @@ type DiscoveryConfig struct {
 	AdvertiseBaseURL string `mapstructure:"advertise_base_url"`
 }
 
-// Init 负责加载当前运行环境的配置文件。
+// Init 负责加载当前部署配置文件。
 //
 // 这个配置入口的来历：
-// - 用户之前已经明确提出需要 dev / test / prod 三套环境配置；
-// - 现在项目从桌面端切回纯服务端后，这个入口继续承担“按环境装配配置”的职责；
-// - 后续新增 Redis、任务队列或第三方服务时，也应继续通过这里统一挂载，避免业务层直接读环境变量形成隐式依赖。
+// - 早期为了本地开发区分过 dev/test/prod 配置文件；
+// - 用户在 2026-06-09 明确收紧：Edge Client 后期没有开发/测试/生产运行模式，实际都按生产口径运行；
+// - 因此 ENV/BuildEnv 现在只选择配置文件，不再代表业务行为模式，Conf.Mode 会统一归一为 production。
 func Init(projectRoot string) error {
 	env := resolveEnv()
 	configFile := filepath.Join(projectRoot, "Settings", fmt.Sprintf("config-%s.yaml", env))
@@ -110,8 +110,8 @@ func Init(projectRoot string) error {
 	configEngine.SetConfigFile(configFile)
 	configEngine.SetConfigType("yaml")
 	configEngine.SetDefault("name", "private-browser-client")
-	configEngine.SetDefault("mode", env)
-	configEngine.SetDefault("version", "0.1.5")
+	configEngine.SetDefault("mode", "production")
+	configEngine.SetDefault("version", "0.1.8")
 	configEngine.SetDefault("server.host", "0.0.0.0")
 	configEngine.SetDefault("server.port", 3300)
 	configEngine.SetDefault("server.read_timeout_seconds", 15)
@@ -139,6 +139,7 @@ func Init(projectRoot string) error {
 	Conf.ProjectRoot = projectRoot
 	Conf.ConfigFile = configFile
 	Conf.Env = env
+	normalizeRuntimeMode(Conf)
 	if Conf.ServerConfig == nil {
 		Conf.ServerConfig = &ServerConfig{}
 	}
@@ -166,6 +167,7 @@ func Init(projectRoot string) error {
 		updated.ProjectRoot = projectRoot
 		updated.ConfigFile = configFile
 		updated.Env = env
+		normalizeRuntimeMode(updated)
 		if updated.ServerConfig == nil {
 			updated.ServerConfig = &ServerConfig{}
 		}
@@ -185,6 +187,19 @@ func Init(projectRoot string) error {
 	})
 
 	return nil
+}
+
+// normalizeRuntimeMode 把边缘服务运行口径统一为 production。
+//
+// 设计来源：
+// - Client 是部署在客户节点上的边缘服务，不应因为读取 config-dev.yaml/config-test.yaml 就进入不同业务模式；
+// - 配置文件名只表示“这次启动读取哪份参数”，不应影响 SQLite、生命周期状态机、导入恢复规则或接口语义；
+// - 这样可以避免后续切换 ENV 后出现不同 mode、不同数据库、不同状态口径导致的“数据掉了”错觉。
+func normalizeRuntimeMode(config *AppConfig) {
+	if config == nil {
+		return
+	}
+	config.Mode = "production"
 }
 
 // normalizeStatusSyncConfig 收敛后台同步任务的时间配置。
@@ -247,17 +262,18 @@ func normalizeDiscoveryConfig(config *DiscoveryConfig) {
 	}
 }
 
-// resolveEnv 统一决定当前运行环境。
+// resolveEnv 统一决定当前读取哪份配置文件。
 //
-// 优先级保持成：运行时 `ENV` > 编译时 `BuildEnv` > 默认 `dev`。
-// 这个顺序是为了兼顾本地开发、CI 构建和部署覆盖，后续不要在别处再写一套环境判断逻辑。
+// 注意：这里的 env 只用于选择 `Settings/config-{env}.yaml`，不再代表业务运行模式；
+// Client 后期一律按 production 口径运行。默认读取 prod，是为了避免本地/容器/远端部署因为未设置 ENV
+// 而落到 dev 配置和 dev 数据库。
 func resolveEnv() string {
 	env := strings.TrimSpace(os.Getenv("ENV"))
 	if env == "" {
 		env = strings.TrimSpace(BuildEnv)
 	}
 	if env == "" {
-		env = "dev"
+		env = "prod"
 	}
 	return strings.ToLower(env)
 }

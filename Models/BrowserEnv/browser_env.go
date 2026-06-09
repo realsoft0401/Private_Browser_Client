@@ -7,7 +7,7 @@ const (
 	//
 	// 设计来源：
 	// - 环境包后续要支持云存储、跨设备导入和长期迁移；
-	// - schemaVersion 写进 manifest 后，未来字段升级时可以做兼容判断；
+	// - schemaVersion 写进 profile 后，未来字段升级时可以做兼容判断；
 	// - 第一版固定为 1，不允许调用方传入覆盖。
 	SchemaVersion = 1
 
@@ -267,6 +267,25 @@ type StopBrowserEnvResponse struct {
 	StoppedAt       int64   `json:"stoppedAt"`
 }
 
+// RevalidateBrowserEnvResponse 是异常环境重新准入后的状态摘要。
+//
+// 设计来源：
+// - 用户明确要求 status=error 不能被 run/stop/backup/proxy update 隐式恢复；
+// - 管理员排查后必须走受控 revalidate，只校验原子材料、Docker 事实和本机端口；
+// - revalidate 不启动容器、不拉镜像、不证明网络指纹可用，因此 runtimeProtection 只能回到 pending。
+type RevalidateBrowserEnvResponse struct {
+	EnvID                   string          `json:"envId"`
+	Status                  string          `json:"status"`
+	ContainerStatus         string          `json:"containerStatus"`
+	ContainerID             *string         `json:"containerId,omitempty"`
+	ContainerName           *string         `json:"containerName,omitempty"`
+	EnvSequence             int             `json:"envSequence"`
+	Ports                   BrowserEnvPorts `json:"ports"`
+	RuntimeProtectionStatus string          `json:"runtimeProtectionStatus"`
+	RevalidatedAt           int64           `json:"revalidatedAt"`
+	Message                 string          `json:"message"`
+}
+
 // DeleteBrowserEnvResponse 是环境包物理删除后的响应摘要。
 //
 // 设计来源：
@@ -332,6 +351,41 @@ type RestoreBrowserEnvResponse struct {
 	Message    string          `json:"message"`
 }
 
+// BrowserEnvRebuildCandidate 是重建 SQLite 索引前的只读候选项。
+//
+// 设计来源：
+// - 用户要求 SQLite 丢失时可以从本机环境包文件恢复索引；
+// - 但候选扫描只能诊断，不能把坏目录自动写进系统；
+// - 因此这里明确给出 status/errors/indexed，让管理员先看见原因，再决定是否逐个 rebuild-index。
+type BrowserEnvRebuildCandidate struct {
+	EnvID   string   `json:"envId"`
+	UserID  string   `json:"userId"`
+	RPAType string   `json:"rpaType"`
+	Name    string   `json:"name"`
+	EnvPath string   `json:"envPath"`
+	Status  string   `json:"status"`
+	Indexed bool     `json:"indexed"`
+	Errors  []string `json:"errors"`
+}
+
+type BrowserEnvRebuildCandidatesResponse struct {
+	Total int                          `json:"total"`
+	Items []BrowserEnvRebuildCandidate `json:"items"`
+}
+
+// BrowserEnvRebuildIndexResponse 是单个环境包重建 SQLite 索引后的结果。
+//
+// rebuild-index 不启动容器、不拉镜像、不验证最终网络指纹；它只把原子完整目录重新纳入 SQLite 索引。
+type BrowserEnvRebuildIndexResponse struct {
+	EnvID     string          `json:"envId"`
+	UserID    string          `json:"userId"`
+	RPAType   string          `json:"rpaType"`
+	EnvPath   string          `json:"envPath"`
+	Status    string          `json:"status"`
+	Ports     BrowserEnvPorts `json:"ports"`
+	RebuiltAt int64           `json:"rebuiltAt"`
+}
+
 // BrowserEnvVNCInfoResponse 是浏览器版 VNC 连接信息。
 //
 // 设计来源：
@@ -346,23 +400,16 @@ type BrowserEnvVNCInfoResponse struct {
 	WebVNCURL string `json:"webVncUrl"`
 }
 
-// UpdateBrowserEnvProxyRequest 是修改环境包代理配置和运行镜像的请求体。
+// UpdateBrowserEnvProxyRequest 是修改环境包代理配置的请求体。
 //
 // 设计来源：
 // - 用户明确要求“只要改的东西，就需要重新启动容器”；
-// - 代理配置会进入 run 阶段的容器环境变量，并参与 identityHash；
-// - image 会进入 profile.runtime.image，只影响后续 Docker create，不参与环境身份 hash；
+// - 代理配置会进入 run 阶段的容器环境变量，但不参与 identityHash；
+// - 镜像选择归 Server 或中心 ImagePolicy，不能再借代理接口顺手修改 runtime.image；
 // - 因此这里使用 PATCH 语义允许局部字段；running 环境会进入后台重建队列，非 running 环境返回 restartRequired=true。
 type UpdateBrowserEnvProxyRequest struct {
 	Enabled *bool   `json:"enabled"`
 	Type    *string `json:"type"`
-	// Image 是浏览器环境包下一次 run 使用的 Docker 镜像。
-	//
-	// 设计来源：
-	// - 用户测试时需要把环境包统一切到 arm64 浏览器镜像；
-	// - 镜像属于 profile.runtime.image，不属于代理 YAML，但代理修改后通常会触发同一次容器重建；
-	// - 因此 PATCH proxy 允许顺手修改 image，避免前端为了“代理 + 镜像”再新增一个临时接口。
-	Image *string `json:"image"`
 	// Mode 是 Clash 顶层代理模式。
 	//
 	// 设计来源：
@@ -454,12 +501,11 @@ type StatusSyncSnapshot struct {
 // - 代理配置和指纹原文可能很大且敏感，详情只返回摘要、hash 和路径，不返回 clash.yaml 明文或 fingerprint raw。
 //
 // 职责边界：
-// - 负责给前端展示 manifest/profile/binding/container 的结构化事实；
+// - 负责给前端展示 profile/binding/container 的结构化事实；
 // - 负责暴露运行中 VNC 入口；
 // - 不负责修改环境包，也不做 Docker 实时探测。
 type BrowserEnvDetailResponse struct {
 	Index       *BrowserEnvIndex               `json:"index"`
-	Manifest    ManifestFile                   `json:"manifest"`
 	Profile     ProfileFile                    `json:"profile"`
 	Binding     BrowserEnvBindingDetail        `json:"binding"`
 	Container   ContainerFile                  `json:"container"`
@@ -541,11 +587,11 @@ type BrowserEnvFingerprintRuntimeDetail struct {
 //
 // 这不是运行健康检查，不会访问 Docker；它只验证数据库索引和环境包文件是否还能互相对上。
 type BrowserEnvConsistencyCheck struct {
-	ManifestMatchesIndex bool     `json:"manifestMatchesIndex"`
-	IdentityHashMatches  bool     `json:"identityHashMatches"`
-	ProxyConfigExists    bool     `json:"proxyConfigExists"`
-	BrowserDataExists    bool     `json:"browserDataExists"`
-	Errors               []string `json:"errors"`
+	ProfileMatchesIndex bool     `json:"profileMatchesIndex"`
+	IdentityHashMatches bool     `json:"identityHashMatches"`
+	ProxyConfigExists   bool     `json:"proxyConfigExists"`
+	BrowserDataExists   bool     `json:"browserDataExists"`
+	Errors              []string `json:"errors"`
 }
 
 // BrowserEnvDetailVNCConnection 是详情接口中运行态 VNC 连接入口。
@@ -560,10 +606,13 @@ type BrowserEnvDetailVNCConnection struct {
 // BrowserEnvRuntimeUpdate 是 browser_envs 运行态字段更新模型。
 //
 // 它只更新列表和状态需要的摘要字段，不把 Docker create 的完整配置或环境变量写进数据库；
-// 完整运行事实仍以 container.json / manifest.lastRuntime 和 Docker daemon 为准。
+// 完整运行事实仍以 container.json / profile.lastRuntime 和 Docker daemon 为准。
 type BrowserEnvRuntimeUpdate struct {
 	EnvID           string
 	Status          string
+	EnvSequence     *int
+	CDPPort         *int
+	VNCPort         *int
 	ContainerID     *string
 	ContainerName   *string
 	ContainerStatus string
@@ -597,6 +646,9 @@ type BrowserEnvConfigUpdate struct {
 type BrowserEnvBackupStateUpdate struct {
 	EnvID           string
 	Status          string
+	EnvSequence     *int
+	CDPPort         *int
+	VNCPort         *int
 	ContainerID     *string
 	ContainerStatus string
 	MonitorStatus   string
@@ -728,38 +780,20 @@ type ScreenSize struct {
 	Height int `json:"height"`
 }
 
-// ManifestFile 是 manifest.json 的落盘结构。
-type ManifestFile struct {
-	SchemaVersion  int                   `json:"schemaVersion"`
-	PackageVersion *int                  `json:"packageVersion,omitempty"`
-	EnvID          string                `json:"envId"`
-	UserID         string                `json:"userId"`
-	RPAType        string                `json:"rpaType"`
-	SnowflakeID    string                `json:"snowflakeId"`
-	EnvSequence    int                   `json:"envSequence"`
-	Paths          ManifestPaths         `json:"paths"`
-	LastRuntime    ManifestLastRuntime   `json:"lastRuntime"`
-	ExportedAt     *int64                `json:"exportedAt,omitempty"`
-	ExportSource   *ManifestExportSource `json:"exportSource,omitempty"`
-	ExportAction   string                `json:"exportAction,omitempty"`
-	Checksums      map[string]string     `json:"checksums,omitempty"`
-	CreatedAt      int64                 `json:"createdAt"`
-	UpdatedAt      int64                 `json:"updatedAt"`
-}
-
-// ManifestExportSource 记录环境包来源。
+// PackageExportSource 记录环境包来源。
 //
-// 字段名沿用早期 export 协议，当前公开接口已经收敛为 backup/restore。
+// 字段名沿用早期 export 协议，但从 2026-06-09 起写入 profile.package，
+// 不再单独生成 manifest.json，避免环境包出现两份互相竞争的主配置。
 // 这些字段只写入 staging 副本，用于后续 import-package 审计包从哪里来；
 // 它们不是账号环境稳定身份，不能参与 identityHash。
-type ManifestExportSource struct {
+type PackageExportSource struct {
 	Type           string `json:"type"`
 	Env            string `json:"env"`
 	ServiceVersion string `json:"serviceVersion"`
 }
 
-// ManifestPaths 统一记录环境包内相对路径。
-type ManifestPaths struct {
+// PackagePaths 统一记录环境包内相对路径。
+type PackagePaths struct {
 	Profile                  string `json:"profile"`
 	Binding                  string `json:"binding"`
 	Container                string `json:"container"`
@@ -772,10 +806,10 @@ type ManifestPaths struct {
 	Logs                     string `json:"logs"`
 }
 
-// ManifestLastRuntime 记录环境包最近一次运行位置。
+// PackageLastRuntime 记录环境包最近一次运行位置。
 //
 // 这些字段只用于审计和排障，不参与 identityHash。
-type ManifestLastRuntime struct {
+type PackageLastRuntime struct {
 	EdgeNodeID    *string `json:"edgeNodeId"`
 	DeviceArch    *string `json:"deviceArch"`
 	DockerAPIURL  *string `json:"dockerApiUrl"`
@@ -785,17 +819,38 @@ type ManifestLastRuntime struct {
 	LastStoppedAt *int64  `json:"lastStoppedAt"`
 }
 
+// ProfilePackageMetadata 保存环境包打包、备份和导入阶段的审计信息。
+//
+// 设计来源：
+// - 用户确认 profile.json 是环境包唯一详细配置文档和 SQLite 重建入口；
+// - 因此旧 manifest.json 里的 packageVersion/export/checksums 不能继续独立存在；
+// - 这些字段只服务包完整性校验和来源追踪，不参与 identityHash，不承载运行态决策。
+type ProfilePackageMetadata struct {
+	Version      *int                 `json:"version,omitempty"`
+	ExportedAt   *int64               `json:"exportedAt,omitempty"`
+	ExportSource *PackageExportSource `json:"exportSource,omitempty"`
+	ExportAction string               `json:"exportAction,omitempty"`
+	Checksums    map[string]string    `json:"checksums,omitempty"`
+}
+
 // ProfileFile 是 profile.json 的落盘结构。
 type ProfileFile struct {
-	EnvID       string          `json:"envId"`
-	EnvSequence int             `json:"envSequence"`
-	Name        string          `json:"name"`
-	RPAType     string          `json:"rpaType"`
-	Runtime     ProfileRuntime  `json:"runtime"`
-	Environment ProfileEnv      `json:"environment"`
-	Ports       BrowserEnvPorts `json:"ports"`
-	Proxy       ProfileProxy    `json:"proxy"`
-	Metadata    ProfileMetadata `json:"metadata"`
+	SchemaVersion int                    `json:"schemaVersion"`
+	EnvID         string                 `json:"envId"`
+	UserID        string                 `json:"userId"`
+	RPAType       string                 `json:"rpaType"`
+	SnowflakeID   string                 `json:"snowflakeId"`
+	EnvSequence   int                    `json:"envSequence"`
+	Name          string                 `json:"name"`
+	IdentityHash  string                 `json:"identityHash"`
+	Runtime       ProfileRuntime         `json:"runtime"`
+	Environment   ProfileEnv             `json:"environment"`
+	Ports         BrowserEnvPorts        `json:"ports"`
+	Proxy         ProfileProxy           `json:"proxy"`
+	Paths         PackagePaths           `json:"paths"`
+	LastRuntime   PackageLastRuntime     `json:"lastRuntime"`
+	Package       ProfilePackageMetadata `json:"package"`
+	Metadata      ProfileMetadata        `json:"metadata"`
 }
 
 // ProfileRuntime 保存浏览器容器启动所需的稳定运行配置。

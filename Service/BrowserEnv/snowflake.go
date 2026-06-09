@@ -20,7 +20,7 @@ type snowflakeGenerator struct {
 //
 // 设计来源：
 // - 环境包第一版由边缘服务本机生成 envId，不依赖中心服务端；
-// - snowflakeId 会写入 manifest，成为 envId 的唯一编码部分；
+// - snowflakeId 会写入 profile，成为 envId 的唯一编码部分；
 // - workerID 暂定为 1，未来如果中心服务端下发边缘分片 ID，只需要替换这里的 workerID 来源。
 func newSnowflakeGenerator(workerID int64) *snowflakeGenerator {
 	return &snowflakeGenerator{
@@ -31,7 +31,7 @@ func newSnowflakeGenerator(workerID int64) *snowflakeGenerator {
 
 // Next 生成一个递增且足够唯一的雪花 ID 字符串。
 //
-// 这里返回字符串，是因为 envId、目录名、manifest 都把它当作外部稳定编码，
+// 这里返回字符串，是因为 envId、目录名、profile 都把它当作外部稳定编码，
 // 避免前端或 JSON 解析环境因为大整数精度导致 ID 变化。
 func (g *snowflakeGenerator) Next() string {
 	g.mu.Lock()

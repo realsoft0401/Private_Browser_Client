@@ -9,11 +9,11 @@ import (
 	"private_browser_client/Settings"
 )
 
-// defaultManifestPaths 返回环境包内部文件的标准相对路径。
+// defaultPackagePaths 返回环境包内部文件的标准相对路径。
 //
 // 这些路径不能写成机器绝对路径，因为环境包后续要支持打包上传、下载到另一台设备后继续运行。
-func defaultManifestPaths() model.ManifestPaths {
-	return model.ManifestPaths{
+func defaultPackagePaths() model.PackagePaths {
+	return model.PackagePaths{
 		Profile:                  "profile.json",
 		Binding:                  "binding.json",
 		Container:                "container.json",
@@ -36,7 +36,6 @@ func buildEnvID(userID string, rpaType string, snowflakeID string) string {
 // 它只做“从已归一化请求 + 生成上下文 -> 文件模型”的转换，
 // 不负责写磁盘，方便后续单独测试 hash、端口和文件内容是否正确。
 func buildPackageFiles(ctx *createContext) (envPackageFiles, error) {
-	manifest := buildManifestFile(ctx)
 	profile := buildProfileFile(ctx)
 	binding := buildBindingFile(ctx)
 	container := buildContainerFile(ctx)
@@ -47,7 +46,6 @@ func buildPackageFiles(ctx *createContext) (envPackageFiles, error) {
 	}
 
 	return envPackageFiles{
-		Manifest:      manifest,
 		Profile:       profile,
 		Binding:       binding,
 		Container:     container,
@@ -59,31 +57,20 @@ func buildPackageFiles(ctx *createContext) (envPackageFiles, error) {
 	}, nil
 }
 
-func buildManifestFile(ctx *createContext) model.ManifestFile {
-	return model.ManifestFile{
-		SchemaVersion: model.SchemaVersion,
-		EnvID:         ctx.EnvID,
-		UserID:        ctx.Param.UserID,
-		RPAType:       ctx.Param.RPAType,
-		SnowflakeID:   ctx.SnowflakeID,
-		EnvSequence:   ctx.EnvSequence,
-		Paths:         ctx.Paths,
-		LastRuntime:   model.ManifestLastRuntime{},
-		CreatedAt:     ctx.Now,
-		UpdatedAt:     ctx.Now,
-	}
-}
-
 func buildProfileFile(ctx *createContext) model.ProfileFile {
 	proxyEnabled := false
 	if ctx.Param.Proxy.Enabled != nil {
 		proxyEnabled = *ctx.Param.Proxy.Enabled
 	}
 	return model.ProfileFile{
-		EnvID:       ctx.EnvID,
-		EnvSequence: ctx.EnvSequence,
-		Name:        ctx.Param.Name,
-		RPAType:     ctx.Param.RPAType,
+		SchemaVersion: model.SchemaVersion,
+		EnvID:         ctx.EnvID,
+		UserID:        ctx.Param.UserID,
+		RPAType:       ctx.Param.RPAType,
+		SnowflakeID:   ctx.SnowflakeID,
+		EnvSequence:   ctx.EnvSequence,
+		Name:          ctx.Param.Name,
+		IdentityHash:  ctx.IdentityHash,
 		Runtime: model.ProfileRuntime{
 			Image:                ctx.Param.Runtime.Image,
 			ContainerUserDataDir: model.DefaultContainerUserDataDir,
@@ -106,6 +93,9 @@ func buildProfileFile(ctx *createContext) model.ProfileFile {
 			Type:       ctx.Param.Proxy.Type,
 			ConfigPath: ctx.Paths.ProxyConfig,
 		},
+		Paths:       ctx.Paths,
+		LastRuntime: model.PackageLastRuntime{},
+		Package:     model.ProfilePackageMetadata{},
 		Metadata: model.ProfileMetadata{
 			Source:      ctx.Param.Metadata.Source,
 			Description: ctx.Param.Metadata.Description,
@@ -187,7 +177,7 @@ func buildFingerprintSnapshotFile() model.FingerprintSnapshotFile {
 //
 // 第一版创建环境包时通常没有正式指纹备份，所以 backup.json 写 available=false，
 // runtime-config.json 写空对象。只有服务端明确带入可恢复指纹时，才生成可注入配置。
-func buildFingerprintFiles(param *model.CreateBrowserEnvRequest, paths model.ManifestPaths, now int64) (model.FingerprintBackupFile, any, error) {
+func buildFingerprintFiles(param *model.CreateBrowserEnvRequest, paths model.PackagePaths, now int64) (model.FingerprintBackupFile, any, error) {
 	backupReq := (*model.CreateFingerprintBackupRequest)(nil)
 	if param.Fingerprint != nil {
 		backupReq = param.Fingerprint.Backup

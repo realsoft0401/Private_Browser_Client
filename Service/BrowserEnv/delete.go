@@ -48,6 +48,9 @@ func (s *Service) DeleteBrowserEnv(envID string) (*model.DeleteBrowserEnvRespons
 	if index.Status == model.BrowserEnvStatusRunning || index.ContainerStatus == model.BrowserEnvStatusRunning {
 		return nil, conflictError("环境包正在运行，请先停止后再删除")
 	}
+	if index.Status == model.BrowserEnvStatusError {
+		return nil, conflictError("环境包处于 error，不能走普通 DELETE；请先 revalidate，或后续使用管理员强销毁接口")
+	}
 
 	if err = removeStoppedContainerForDelete(index); err != nil {
 		return nil, err

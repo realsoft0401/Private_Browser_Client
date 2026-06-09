@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -14,12 +13,10 @@ import (
 	browserEnvDao "private_browser_client/Dao/BrowserEnv"
 	model "private_browser_client/Models/BrowserEnv"
 	TaskService "private_browser_client/Service/Task"
-	"private_browser_client/Settings"
 )
 
 type proxyConfigPackage struct {
 	Index           *model.BrowserEnvIndex
-	Manifest        model.ManifestFile
 	Profile         model.ProfileFile
 	Binding         model.BindingFile
 	ProxyConfig     string
@@ -30,9 +27,7 @@ type normalizedProxyUpdate struct {
 	Enabled      bool
 	Type         string
 	Config       string
-	Image        string
 	ProxyChanged bool
-	ImageChanged bool
 	Changed      bool
 }
 
@@ -40,12 +35,12 @@ type normalizedProxyUpdate struct {
 //
 // 设计来源：
 // - 用户明确要求“只要改的东西，就需要重新启动容器”；
-// - 代理配置会被 run 编码进容器环境变量，同时参与 binding.identityHash；
+// - 代理配置会被 run 编码进容器环境变量，但不参与 binding.identityHash；
 // - 用户进一步确认“启动对用户来说是无感知的”，因此 running 状态下真实变更会由本接口自动重建容器。
 //
 // 职责边界：
-// - 负责修改 profile.proxy、proxy/clash.yaml、binding.identityHash 和 manifest.updatedAt；
-// - 负责同步 browser_envs.updated_at，并在 error 状态下把环境包收敛回 stopped 以便重新 run；
+// - 负责修改 profile.proxy、proxy/clash.yaml、binding.version 和 profile.metadata.updatedAt；
+// - 负责同步 browser_envs.updated_at；error 状态必须先走 revalidate，不能通过代理修改顺手恢复；
 // - running 环境会把 forceRecreate 放到后台队列，避免 rule/CDP timezone 探测拖断 HTTP 请求；
 // - 异步策略绑定的是 running 环境的重建任务，不是 rule 模式本身；rule/global/direct 都会后台重建，只是后续探测入口不同；
 // - 不删除 browser-data/profile，不返回代理正文。
@@ -211,10 +206,13 @@ func enqueueProxyRecreate(envID string, taskType string) *TaskService.EdgeTask {
 //
 // running 允许进入配置修改，但必须由 UpdateBrowserEnvProxy 自己完成 forceRecreate；
 // deleted/archived/backed_up 不允许修改，是为了避免回收站或只有备份包的资产重新变成半活跃环境。
+// error 也必须拒绝：用户确认异常环境不能靠配置修改“顺手治好”，必须先走 revalidate。
 func ensureProxyUpdateStatus(status string) error {
 	switch status {
-	case model.BrowserEnvStatusCreated, model.BrowserEnvStatusStopped, model.BrowserEnvStatusError, model.BrowserEnvStatusRunning:
+	case model.BrowserEnvStatusCreated, model.BrowserEnvStatusStopped, model.BrowserEnvStatusRunning:
 		return nil
+	case model.BrowserEnvStatusError:
+		return conflictError("环境包处于 error，请先 revalidate 后再修改配置")
 	case model.BrowserEnvStatusDeleted:
 		return conflictError("环境包已删除，不能修改配置")
 	case model.BrowserEnvStatusBackedUp:
@@ -228,34 +226,20 @@ func ensureProxyUpdateStatus(status string) error {
 
 // loadProxyConfigPackage 读取代理修改所需的环境包文件。
 //
-// 它只读取 manifest/profile/binding/proxyConfig，不读取 fingerprint raw，也不扫描 browser-data；
+// 它只读取 profile/binding/proxyConfig，不读取 fingerprint raw，也不扫描 browser-data；
 // 代理修改必须围绕环境包内相对路径执行，避免导入包里出现路径逃逸。
 func loadProxyConfigPackage(index *model.BrowserEnvIndex) (*proxyConfigPackage, error) {
-	if index == nil {
-		return nil, fmt.Errorf("环境包索引不能为空")
-	}
-	if Settings.Conf.ProjectRoot == "" {
-		return nil, fmt.Errorf("project root 不能为空")
-	}
-	absoluteEnvPath := filepath.Join(Settings.Conf.ProjectRoot, filepath.FromSlash(index.EnvPath))
-	var manifest model.ManifestFile
-	if err := readJSONFile(filepath.Join(absoluteEnvPath, "manifest.json"), &manifest); err != nil {
-		return nil, err
-	}
-	if manifest.EnvID != index.EnvID {
-		return nil, fmt.Errorf("manifest.envId 与数据库索引不一致")
-	}
-	var profile model.ProfileFile
-	if err := readPackageJSON(absoluteEnvPath, manifest.Paths.Profile, &profile); err != nil {
+	absoluteEnvPath, profile, err := loadPackageProfileFromIndex(index)
+	if err != nil {
 		return nil, err
 	}
 	var binding model.BindingFile
-	if err := readPackageJSON(absoluteEnvPath, manifest.Paths.Binding, &binding); err != nil {
+	if err := readPackageJSON(absoluteEnvPath, profile.Paths.Binding, &binding); err != nil {
 		return nil, err
 	}
 	proxyConfig := ""
-	if strings.TrimSpace(manifest.Paths.ProxyConfig) != "" {
-		proxyPath, err := safePackagePath(absoluteEnvPath, manifest.Paths.ProxyConfig)
+	if strings.TrimSpace(profile.Paths.ProxyConfig) != "" {
+		proxyPath, err := safePackagePath(absoluteEnvPath, profile.Paths.ProxyConfig)
 		if err != nil {
 			return nil, err
 		}
@@ -268,7 +252,6 @@ func loadProxyConfigPackage(index *model.BrowserEnvIndex) (*proxyConfigPackage, 
 	}
 	return &proxyConfigPackage{
 		Index:           index,
-		Manifest:        manifest,
 		Profile:         profile,
 		Binding:         binding,
 		ProxyConfig:     proxyConfig,
@@ -279,13 +262,12 @@ func loadProxyConfigPackage(index *model.BrowserEnvIndex) (*proxyConfigPackage, 
 // normalizeProxyUpdate 合并 PATCH 请求和现有代理配置。
 //
 // PATCH 允许前端只传被修改字段；但最终落盘必须是完整 profile.proxy + proxy/clash.yaml。
-// image 是 profile.runtime.image 的局部更新入口，和代理配置共用一次重建队列，但不参与 identityHash。
 // mode 属于 Clash YAML 顶层字段：启用代理时可单独修改，也可和 configBase64 一起覆盖；
 // 禁用代理时会清空代理类型和配置，忽略 mode，避免“禁用动作”被空配置校验误伤。
 // 只有实际业务值发生变化时，才标记 Changed=true，避免无意义修改也要求重启容器。
 func normalizeProxyUpdate(pkg *proxyConfigPackage, param *model.UpdateBrowserEnvProxyRequest) (*normalizedProxyUpdate, error) {
-	if param.Enabled == nil && param.Type == nil && param.Image == nil && param.Mode == nil && param.ConfigBase64 == nil {
-		return nil, invalidError("至少需要传 enabled/type/image/mode/configBase64 中的一个字段")
+	if param.Enabled == nil && param.Type == nil && param.Mode == nil && param.ConfigBase64 == nil {
+		return nil, invalidError("至少需要传 enabled/type/mode/configBase64 中的一个字段")
 	}
 	enabled := pkg.Profile.Proxy.Enabled
 	if param.Enabled != nil {
@@ -303,14 +285,6 @@ func normalizeProxyUpdate(pkg *proxyConfigPackage, param *model.UpdateBrowserEnv
 		}
 		config = decoded
 	}
-	image := strings.TrimSpace(pkg.Profile.Runtime.Image)
-	if param.Image != nil {
-		image = strings.TrimSpace(*param.Image)
-		if image == "" {
-			return nil, invalidError("image 不能为空")
-		}
-	}
-
 	if enabled {
 		if proxyType == "" {
 			proxyType = "clash-verge"
@@ -340,15 +314,12 @@ func normalizeProxyUpdate(pkg *proxyConfigPackage, param *model.UpdateBrowserEnv
 	proxyChanged := enabled != pkg.Profile.Proxy.Enabled ||
 		proxyType != pkg.Profile.Proxy.Type ||
 		buildTextHash(config) != buildTextHash(pkg.ProxyConfig)
-	imageChanged := image != strings.TrimSpace(pkg.Profile.Runtime.Image)
 	return &normalizedProxyUpdate{
 		Enabled:      enabled,
 		Type:         proxyType,
 		Config:       config,
-		Image:        image,
 		ProxyChanged: proxyChanged,
-		ImageChanged: imageChanged,
-		Changed:      proxyChanged || imageChanged,
+		Changed:      proxyChanged,
 	}, nil
 }
 
@@ -440,19 +411,16 @@ func decodeProxyConfigBase64(raw string) (string, error) {
 	return string(bytes), nil
 }
 
-// finalizeProxyUpdate 写入代理配置和运行镜像修改。
+// finalizeProxyUpdate 写入代理配置修改。
 //
-// 代理和镜像都不参与 identityHash。代理变更只会递增 binding.version，
+// 代理不参与 identityHash。代理变更只会递增 binding.version，
 // 并把 runtimeProtection/proxyRuntime 重置为 pending，等待下一次 run 重新做网络指纹确认。
 func finalizeProxyUpdate(pkg *proxyConfigPackage, update *normalizedProxyUpdate) (*model.UpdateBrowserEnvProxyResponse, error) {
 	now := time.Now().Unix()
 	pkg.Profile.Proxy.Enabled = update.Enabled
 	pkg.Profile.Proxy.Type = update.Type
-	if update.ImageChanged {
-		pkg.Profile.Runtime.Image = update.Image
-	}
 	if strings.TrimSpace(pkg.Profile.Proxy.ConfigPath) == "" {
-		pkg.Profile.Proxy.ConfigPath = pkg.Manifest.Paths.ProxyConfig
+		pkg.Profile.Proxy.ConfigPath = pkg.Profile.Paths.ProxyConfig
 	}
 	pkg.Profile.Metadata.UpdatedAt = now
 
@@ -464,22 +432,19 @@ func finalizeProxyUpdate(pkg *proxyConfigPackage, update *normalizedProxyUpdate)
 		pkg.Binding.RuntimeProtection.LastError = ""
 		pkg.Binding.UpdatedAt = now
 	}
-	pkg.Manifest.UpdatedAt = now
+	pkg.Profile.Metadata.UpdatedAt = now
 
-	if err := writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, "manifest.json"), pkg.Manifest); err != nil {
-		return nil, internalError(err.Error())
-	}
-	if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.Profile, pkg.Profile); err != nil {
+	if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Profile.Paths.Profile, pkg.Profile); err != nil {
 		return nil, internalError(err.Error())
 	}
 	if update.ProxyChanged {
-		if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.Binding, pkg.Binding); err != nil {
+		if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Profile.Paths.Binding, pkg.Binding); err != nil {
 			return nil, internalError(err.Error())
 		}
-		if err := writePackageText(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.ProxyConfig, update.Config); err != nil {
+		if err := writePackageText(pkg.AbsoluteEnvPath, pkg.Profile.Paths.ProxyConfig, update.Config); err != nil {
 			return nil, internalError(err.Error())
 		}
-		if err := writeTimezoneProbePending(pkg.AbsoluteEnvPath, pkg.Manifest.Paths.ProxyRuntime); err != nil {
+		if err := writeTimezoneProbePending(pkg.AbsoluteEnvPath, pkg.Profile.Paths.ProxyRuntime); err != nil {
 			return nil, internalError(err.Error())
 		}
 	}
@@ -514,7 +479,7 @@ func writeTimezoneProbePending(envPath string, relativePath string) error {
 
 // writePackageJSON 在环境包目录内安全写入 JSON。
 //
-// 路径必须来自 manifest 的相对路径，不能让接口参数直接控制写入位置。
+// 路径必须来自 profile.paths 的相对路径，不能让接口参数直接控制写入位置。
 func writePackageJSON(envPath string, relativePath string, value any) error {
 	path, err := safePackagePath(envPath, relativePath)
 	if err != nil {

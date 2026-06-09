@@ -80,44 +80,16 @@ func isContainerMatchedBrowserEnv(index *model.BrowserEnvIndex, container edgeMo
 // validateBackupSourcePackage 校验备份源环境包的标准文件。
 //
 // 这里不读取代理明文或指纹 raw 到响应，只确认包结构足以作为后续 import-package 的输入。
-func validateBackupSourcePackage(index *model.BrowserEnvIndex, envPath string) (model.ManifestFile, error) {
-	var manifest model.ManifestFile
-	if err := readJSONFile(filepath.Join(envPath, "manifest.json"), &manifest); err != nil {
-		return manifest, err
+func validateBackupSourcePackage(index *model.BrowserEnvIndex, envPath string) (model.ProfileFile, error) {
+	pkg, err := loadAndValidateAtomicPackage(envPath)
+	if err != nil {
+		return model.ProfileFile{}, err
 	}
-	if manifest.EnvID != index.EnvID || manifest.UserID != index.UserID || manifest.RPAType != index.RPAType {
-		return manifest, fmt.Errorf("manifest 与 browser_envs 索引不一致")
+	profile := pkg.Profile
+	if profile.EnvID != index.EnvID || profile.UserID != index.UserID || profile.RPAType != index.RPAType {
+		return profile, fmt.Errorf("profile 与 browser_envs 索引不一致")
 	}
-
-	requiredFiles := []string{
-		manifest.Paths.Profile,
-		manifest.Paths.Binding,
-		manifest.Paths.Container,
-		manifest.Paths.FingerprintSnapshot,
-		manifest.Paths.FingerprintBackup,
-		manifest.Paths.FingerprintRuntimeConfig,
-		manifest.Paths.ProxyRuntime,
-	}
-	if manifest.Paths.ProxyConfig != "" {
-		requiredFiles = append(requiredFiles, manifest.Paths.ProxyConfig)
-	}
-	for _, relativePath := range requiredFiles {
-		if err := requirePackageFile(envPath, relativePath); err != nil {
-			return manifest, err
-		}
-	}
-	requiredDirs := []string{
-		manifest.Paths.BrowserData,
-		manifest.Paths.Logs,
-		"proxy",
-		"fingerprint",
-	}
-	for _, relativePath := range requiredDirs {
-		if err := requirePackageDir(envPath, relativePath); err != nil {
-			return manifest, err
-		}
-	}
-	return manifest, nil
+	return profile, nil
 }
 
 func requirePackageFile(envPath string, relativePath string) error {
@@ -150,34 +122,34 @@ func requirePackageDir(envPath string, relativePath string) error {
 	return nil
 }
 
-// writeExportManifest 只修改 staging manifest，写入包协议元信息和文件校验和。
+// writeExportProfile 只修改 staging profile，写入包协议元信息和文件校验和。
 //
-// 这些字段沿用早期 export 命名是为了兼容已落盘的包协议；当前公开接口已经收敛为 backup/restore。
 // 源环境包不能被污染；exportAction 不参与 identityHash，只用于后续导入审计。
-func writeExportManifest(stagingEnvPath string, manifest model.ManifestFile, exportAction string) error {
+func writeExportProfile(stagingEnvPath string, profile model.ProfileFile, exportAction string) error {
 	now := time.Now().Unix()
 	packageVersion := browserEnvPackageVersion
-	manifest.PackageVersion = &packageVersion
-	manifest.ExportedAt = &now
-	manifest.ExportSource = &model.ManifestExportSource{
+	profile.Package.Version = &packageVersion
+	profile.Package.ExportedAt = &now
+	profile.Package.ExportSource = &model.PackageExportSource{
 		Type:           "edge",
 		Env:            SettingsEnv(),
 		ServiceVersion: SettingsVersion(),
 	}
-	manifest.ExportAction = exportAction
-	manifest.Checksums = nil
+	profile.Package.ExportAction = exportAction
+	profile.Package.Checksums = nil
+	profile.Metadata.UpdatedAt = now
 
 	checksums, err := buildPackageChecksums(stagingEnvPath)
 	if err != nil {
 		return err
 	}
-	manifest.Checksums = checksums
-	return writeJSONFile(filepath.Join(stagingEnvPath, "manifest.json"), manifest)
+	profile.Package.Checksums = checksums
+	return writeJSONFile(filepath.Join(stagingEnvPath, "profile.json"), profile)
 }
 
 // buildPackageChecksums 计算 staging 包内文件 sha256。
 //
-// manifest.json 自身不参与 checksums，避免“manifest 记录自己的 hash”造成循环依赖。
+// profile.json 自身不参与 checksums，避免“profile 记录自己的 hash”造成循环依赖。
 func buildPackageChecksums(envPath string) (map[string]string, error) {
 	result := map[string]string{}
 	err := filepath.WalkDir(envPath, func(path string, entry os.DirEntry, walkErr error) error {
@@ -199,7 +171,7 @@ func buildPackageChecksums(envPath string) (map[string]string, error) {
 			return err
 		}
 		relativePath = filepath.ToSlash(relativePath)
-		if relativePath == "manifest.json" {
+		if relativePath == "profile.json" {
 			return nil
 		}
 		sum, err := fileSHA256(path)
@@ -350,7 +322,11 @@ func buildBackupArchiveFileName(envID string, timestamp int64) string {
 }
 
 func SettingsEnv() string {
-	return strings.TrimSpace(Settings.Conf.Env)
+	mode := strings.TrimSpace(Settings.Conf.Mode)
+	if mode == "" {
+		return "production"
+	}
+	return mode
 }
 
 func SettingsVersion() string {

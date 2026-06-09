@@ -40,7 +40,7 @@ type createContext struct {
 	BindingID       string
 	EnvSequence     int
 	Ports           model.BrowserEnvPorts
-	Paths           model.ManifestPaths
+	Paths           model.PackagePaths
 	RelativeEnvPath string
 	AbsoluteEnvPath string
 	Identity        model.BindingIdentity
@@ -57,7 +57,7 @@ type createContext struct {
 // 职责边界：
 // - 负责参数校验、默认值、envId/snowflake/envSequence 生成、hash 计算和文件落盘；
 // - 负责把环境包元数据写入 browser_envs 索引表，便于列表查询、生命周期状态和后续监控；
-// - 不负责 Docker create/start，不检查端口占用，不写 manifest.lastRuntime；
+// - 不负责 Docker create/start，不检查端口占用，不写 profile.lastRuntime；
 // - 写入失败时会清理本次新建的环境包目录，避免留下半成品。
 func (s *Service) CreateBrowserEnv(param *model.CreateBrowserEnvRequest) (*model.CreateBrowserEnvResponse, error) {
 	normalized, err := normalizeCreateRequest(param)
@@ -211,8 +211,8 @@ func newCreateContext(param *model.CreateBrowserEnvRequest) (*createContext, err
 	now := time.Now().Unix()
 	snowflakeID := idGen.Next()
 	envID := buildEnvID(param.UserID, param.RPAType, snowflakeID)
-	paths := defaultManifestPaths()
-	envSequence, err := nextEnvSequence()
+	paths := defaultPackagePaths()
+	envSequence, ports, err := nextAvailableEnvSequenceAndPorts()
 	if err != nil {
 		return nil, internalError(err.Error())
 	}
@@ -224,7 +224,7 @@ func newCreateContext(param *model.CreateBrowserEnvRequest) (*createContext, err
 		EnvID:           envID,
 		BindingID:       fmt.Sprintf("binding-%s-%s-%s", param.UserID, param.RPAType, snowflakeID),
 		EnvSequence:     envSequence,
-		Ports:           buildPorts(envSequence),
+		Ports:           ports,
 		Paths:           paths,
 		RelativeEnvPath: filepath.ToSlash(filepath.Join("data", "browser-envs", "users", param.UserID, param.RPAType, envID)),
 	}
@@ -250,6 +250,42 @@ func buildPorts(envSequence int) model.BrowserEnvPorts {
 		CDP: 8100 + envSequence,
 		VNC: 9100 + envSequence,
 	}
+}
+
+// nextAvailableEnvSequenceAndPorts 分配不会和本机已占用端口冲突的 envSequence/CDP/VNC。
+//
+// 设计来源：
+// - 用户明确要求导入环境包时端口必须根据当前服务器占用情况重新分配；
+// - envSequence 只是本机资源序号，不参与 identityHash，因此可以为了避开端口冲突而跳号；
+// - 这里只检查 TCP 端口是否可绑定，不启动容器、不写 profile，调用方在 staging 校验通过后再落盘。
+func nextAvailableEnvSequenceAndPorts() (int, model.BrowserEnvPorts, error) {
+	start, err := nextEnvSequence()
+	if err != nil {
+		return 0, model.BrowserEnvPorts{}, err
+	}
+	for sequence := start; sequence < start+10000; sequence++ {
+		ports := buildPorts(sequence)
+		if ensureTCPPortAvailable(ports.CDP) == nil && ensureTCPPortAvailable(ports.VNC) == nil {
+			return sequence, ports, nil
+		}
+	}
+	return 0, model.BrowserEnvPorts{}, fmt.Errorf("无法分配可用 CDP/VNC 端口")
+}
+
+// restoreRuntimePorts 优先沿用 SQLite 记录的端口；如果本机已经被其他进程占用，则重新分配。
+//
+// restore 是同机恢复入口，但备份期间端口可能被其它服务占用。端口不属于账号环境身份，
+// 因此这里允许重新分配，并由 restore 同步回 profile/container/SQLite。
+func restoreRuntimePorts(index *model.BrowserEnvIndex) (int, model.BrowserEnvPorts, error) {
+	if index == nil {
+		return 0, model.BrowserEnvPorts{}, fmt.Errorf("环境包索引不能为空")
+	}
+	ports := model.BrowserEnvPorts{CDP: index.CDPPort, VNC: index.VNCPort}
+	if index.EnvSequence > 0 && ports.CDP > 0 && ports.VNC > 0 &&
+		ensureTCPPortAvailable(ports.CDP) == nil && ensureTCPPortAvailable(ports.VNC) == nil {
+		return index.EnvSequence, ports, nil
+	}
+	return nextAvailableEnvSequenceAndPorts()
 }
 
 // buildBindingIdentity 组装参与 identityHash 的稳定身份字段。
@@ -289,7 +325,6 @@ func buildCreateResponse(ctx *createContext) *model.CreateBrowserEnvResponse {
 		Ports:       ctx.Ports,
 		EnvPath:     ctx.RelativeEnvPath,
 		Files: map[string]string{
-			"manifest":                 "manifest.json",
 			"profile":                  ctx.Paths.Profile,
 			"binding":                  ctx.Paths.Binding,
 			"container":                ctx.Paths.Container,

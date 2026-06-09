@@ -46,6 +46,9 @@ func (s *Service) GetBrowserEnvVNCInfo(envID string, httpBase string, wsBase str
 	if index.Status == model.BrowserEnvStatusDeleted {
 		return nil, conflictError("环境包已删除，不能打开 VNC")
 	}
+	if index.Status != model.BrowserEnvStatusRunning {
+		return nil, conflictError("环境包未运行，不能返回 VNC 连接信息")
+	}
 	envID = index.EnvID
 	return &model.BrowserEnvVNCInfoResponse{
 		EnvID:     envID,

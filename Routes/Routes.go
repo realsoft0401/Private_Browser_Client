@@ -20,6 +20,9 @@ import (
 // 当前 Client 已收紧为边缘服务，因此这里只注册本机能力接口。
 // 用户、节点列表、多节点调度等中心服务端接口不要再加回这里，应放到未来 Private_Browser_Server。
 func Setup() *gin.Engine {
+	// Edge Client 后期没有开发/测试/生产运行模式，HTTP 框架也统一使用 release 行为。
+	// 这里不要再跟随 GIN_MODE 或 config-dev/test 文件名切换成 debug 输出，避免商业节点日志暴露路由细节。
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
@@ -52,9 +55,12 @@ func Setup() *gin.Engine {
 	edge.GET("/browser-envs", BrowserEnvService.ListBrowserEnvs)
 	edge.POST("/browser-envs", BrowserEnvService.CreateBrowserEnv)
 	edge.POST("/browser-envs/import-package", BrowserEnvService.ImportBrowserEnvPackage)
+	edge.GET("/browser-envs-rebuild/candidates", BrowserEnvService.ListBrowserEnvRebuildCandidates)
+	edge.POST("/browser-envs-rebuild/:envId", BrowserEnvService.RebuildBrowserEnvIndex)
 	edge.GET("/browser-envs/:envId", BrowserEnvService.GetBrowserEnvDetail)
 	edge.POST("/browser-envs/:envId/run", BrowserEnvService.RunBrowserEnv)
 	edge.POST("/browser-envs/:envId/stop", BrowserEnvService.StopBrowserEnv)
+	edge.POST("/browser-envs/:envId/revalidate", BrowserEnvService.RevalidateBrowserEnv)
 	edge.POST("/browser-envs/:envId/backup", BrowserEnvService.BackupBrowserEnv)
 	edge.POST("/browser-envs/:envId/restore", BrowserEnvService.RestoreBrowserEnv)
 	edge.DELETE("/browser-envs/:envId", BrowserEnvService.DeleteBrowserEnv)

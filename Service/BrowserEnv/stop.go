@@ -3,8 +3,6 @@ package BrowserEnv
 import (
 	"context"
 	"errors"
-	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,18 +10,17 @@ import (
 	model "private_browser_client/Models/BrowserEnv"
 	edgeModel "private_browser_client/Models/Edge"
 	edgeService "private_browser_client/Service/Edge"
-	"private_browser_client/Settings"
 )
 
 // lifecyclePackage 是 stop/status-refresh 这类轻量生命周期动作需要的环境包视图。
 //
 // 设计来源：
 // - run 需要读取 profile、binding、proxy、fingerprint 并做 identityHash 强校验；
-// - stop 只需要确认 manifest/container 的运行态事实，不能因为代理文件或指纹 runtime-config 缺失而拒绝停止；
+// - stop 只需要确认 profile/container 的运行态事实，不能因为代理文件或指纹 runtime-config 缺失而拒绝停止；
 // - 所以这里拆出更小的读取结构，让生命周期动作保持低风险、低侵入。
 type lifecyclePackage struct {
 	Index           *model.BrowserEnvIndex
-	Manifest        model.ManifestFile
+	Profile         model.ProfileFile
 	Container       model.ContainerFile
 	AbsoluteEnvPath string
 }
@@ -33,7 +30,7 @@ type lifecyclePackage struct {
 // 设计来源：
 // - 用户确认 BrowserEnv 应进入正规生命周期管理，前端以后只围绕 envId 操作；
 // - 直接调用 /edge/containers/:id/stop 虽然能停容器，但不会回写 SQLite 和环境包文件；
-// - 因此 stop(envId) 必须成为上层编排入口：查索引、停 Docker、写 container.json、写 manifest、写 browser_envs。
+// - 因此 stop(envId) 必须成为上层编排入口：查索引、停 Docker、写 container.json、写 profile、写 browser_envs。
 //
 // 职责边界：
 // - 负责本机环境包生命周期停止和状态同步；
@@ -65,6 +62,9 @@ func (s *Service) StopBrowserEnv(envID string, param *model.StopBrowserEnvReques
 	if index.Status == model.BrowserEnvStatusBackedUp || index.Status == model.BrowserEnvStatusArchived {
 		return nil, conflictError("环境包当前只有备份包，没有可停止的本机容器")
 	}
+	if index.Status == model.BrowserEnvStatusError {
+		return nil, conflictError("环境包处于 error，普通 stop 不能改写异常生命周期；请先用裸容器接口诊断/停止 Docker，再调用 revalidate")
+	}
 
 	pkg, err := loadLifecyclePackage(index)
 	if err != nil {
@@ -94,31 +94,20 @@ func (s *Service) StopBrowserEnv(envID string, param *model.StopBrowserEnvReques
 
 // loadLifecyclePackage 读取生命周期动作需要的最小文件集合。
 //
-// 这里只读 manifest.json 和 container.json；它不会创建目录、不会校验 identityHash，
+// 这里只读 profile.json 和 container.json；它不会创建目录、不会校验 identityHash，
 // 也不会触碰 browser-data/profile，确保 stop 这类动作不会改变登录态持久化载体。
 func loadLifecyclePackage(index *model.BrowserEnvIndex) (*lifecyclePackage, error) {
-	if index == nil {
-		return nil, fmt.Errorf("环境包索引不能为空")
-	}
-	if Settings.Conf.ProjectRoot == "" {
-		return nil, fmt.Errorf("project root 不能为空")
-	}
-	absoluteEnvPath := filepath.Join(Settings.Conf.ProjectRoot, filepath.FromSlash(index.EnvPath))
-	manifestPath := filepath.Join(absoluteEnvPath, "manifest.json")
-	var manifest model.ManifestFile
-	if err := readJSONFile(manifestPath, &manifest); err != nil {
+	absoluteEnvPath, profile, err := loadPackageProfileFromIndex(index)
+	if err != nil {
 		return nil, err
 	}
-	if manifest.EnvID != index.EnvID {
-		return nil, fmt.Errorf("manifest.envId 与数据库索引不一致")
-	}
 	var container model.ContainerFile
-	if err := readPackageJSON(absoluteEnvPath, manifest.Paths.Container, &container); err != nil {
+	if err := readPackageJSON(absoluteEnvPath, profile.Paths.Container, &container); err != nil {
 		return nil, err
 	}
 	return &lifecyclePackage{
 		Index:           index,
-		Manifest:        manifest,
+		Profile:         profile,
 		Container:       container,
 		AbsoluteEnvPath: absoluteEnvPath,
 	}, nil
@@ -165,15 +154,15 @@ func finalizeStopPackage(pkg *lifecyclePackage, actionStatus string, message str
 	pkg.Container.StoppedAt = &now
 	pkg.Container.UpdatedAt = now
 
-	pkg.Manifest.LastRuntime.ContainerID = optionalString(containerID)
-	pkg.Manifest.LastRuntime.ContainerName = optionalString(containerName)
-	pkg.Manifest.LastRuntime.LastStoppedAt = &now
-	pkg.Manifest.UpdatedAt = now
+	pkg.Profile.LastRuntime.ContainerID = optionalString(containerID)
+	pkg.Profile.LastRuntime.ContainerName = optionalString(containerName)
+	pkg.Profile.LastRuntime.LastStoppedAt = &now
+	pkg.Profile.Metadata.UpdatedAt = now
 
-	if err := writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, filepath.FromSlash(pkg.Manifest.Paths.Container)), pkg.Container); err != nil {
+	if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Profile.Paths.Container, pkg.Container); err != nil {
 		return nil, internalError(err.Error())
 	}
-	if err := writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, "manifest.json"), pkg.Manifest); err != nil {
+	if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Profile.Paths.Profile, pkg.Profile); err != nil {
 		return nil, internalError(err.Error())
 	}
 

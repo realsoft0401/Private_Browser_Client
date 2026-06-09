@@ -1,6 +1,6 @@
 name: private-browser-client
-mode: docker
-version: 0.1.7
+mode: production
+version: 0.1.8
 server:
   host: 0.0.0.0
   port: 3300

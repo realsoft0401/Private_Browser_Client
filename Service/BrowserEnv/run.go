@@ -19,7 +19,6 @@ import (
 	model "private_browser_client/Models/BrowserEnv"
 	edgeModel "private_browser_client/Models/Edge"
 	edgeService "private_browser_client/Service/Edge"
-	"private_browser_client/Settings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -33,7 +32,6 @@ var runEnvMu = sync.Mutex{}
 
 type runPackage struct {
 	Index            *model.BrowserEnvIndex
-	Manifest         model.ManifestFile
 	Profile          model.ProfileFile
 	Binding          model.BindingFile
 	Container        model.ContainerFile
@@ -50,8 +48,8 @@ type runPackage struct {
 // - 因此 run 不做镜像架构决策，也不接受前端透传 Docker 参数，只围绕 envId 读取环境包并创建/启动容器。
 //
 // 职责边界：
-// - 负责读取 manifest/profile/binding/container/proxy/fingerprint-runtime；
-// - 负责生成受控 Docker create 参数、启动容器、回写 container.json / manifest.lastRuntime / browser_envs；
+// - 负责读取 profile/binding/container/proxy/fingerprint-runtime；
+// - 负责生成受控 Docker create 参数、启动容器、回写 container.json / profile.lastRuntime / browser_envs；
 // - 不负责拉取镜像、不选择 arm/x86 镜像、不删除 browser-data/profile 登录态目录。
 func (s *Service) RunBrowserEnv(envID string, param *model.RunBrowserEnvRequest) (*model.RunBrowserEnvResponse, error) {
 	envID = strings.TrimSpace(envID)
@@ -93,6 +91,9 @@ func runBrowserEnvLocked(envID string, param *model.RunBrowserEnvRequest) (*mode
 	}
 	if index.Status == model.BrowserEnvStatusBackedUp || index.Status == model.BrowserEnvStatusArchived {
 		return nil, conflictError("环境包当前只有备份包，请先 restore 后再启动")
+	}
+	if index.Status == model.BrowserEnvStatusError {
+		return nil, conflictError("环境包处于 error，普通 run 不能隐式恢复异常环境；请管理员排查文件、Docker 和端口后调用 revalidate")
 	}
 
 	pkg, err := loadRunPackage(index)
@@ -162,40 +163,24 @@ func runBrowserEnvLocked(envID string, param *model.RunBrowserEnvRequest) (*mode
 // 这里从数据库索引拿 envPath，再读取环境包内标准文件，避免绕过 SQLite 直接猜目录。
 // 它只做读取和基础一致性校验，不调用 Docker，也不修改文件。
 func loadRunPackage(index *model.BrowserEnvIndex) (*runPackage, error) {
-	if index == nil {
-		return nil, fmt.Errorf("环境包索引不能为空")
-	}
-	if Settings.Conf.ProjectRoot == "" {
-		return nil, fmt.Errorf("project root 不能为空")
-	}
-	absoluteEnvPath := filepath.Join(Settings.Conf.ProjectRoot, filepath.FromSlash(index.EnvPath))
-	if stat, err := os.Stat(absoluteEnvPath); err != nil {
-		return nil, fmt.Errorf("环境包目录不存在: %w", err)
-	} else if !stat.IsDir() {
-		return nil, fmt.Errorf("环境包路径不是目录")
+	absoluteEnvPath, profile, err := loadPackageProfileFromIndex(index)
+	if err != nil {
+		return nil, err
 	}
 
 	pkg := &runPackage{
 		Index:           index,
+		Profile:         profile,
 		AbsoluteEnvPath: absoluteEnvPath,
 	}
-	if err := readJSONFile(filepath.Join(absoluteEnvPath, "manifest.json"), &pkg.Manifest); err != nil {
+	if err := readPackageJSON(absoluteEnvPath, pkg.Profile.Paths.Binding, &pkg.Binding); err != nil {
 		return nil, err
 	}
-	if pkg.Manifest.EnvID != index.EnvID {
-		return nil, fmt.Errorf("manifest.envId 与数据库索引不一致")
-	}
-	if err := readJSONFile(filepath.Join(absoluteEnvPath, filepath.FromSlash(pkg.Manifest.Paths.Profile)), &pkg.Profile); err != nil {
-		return nil, err
-	}
-	if err := readJSONFile(filepath.Join(absoluteEnvPath, filepath.FromSlash(pkg.Manifest.Paths.Binding)), &pkg.Binding); err != nil {
-		return nil, err
-	}
-	if err := readJSONFile(filepath.Join(absoluteEnvPath, filepath.FromSlash(pkg.Manifest.Paths.Container)), &pkg.Container); err != nil {
+	if err := readPackageJSON(absoluteEnvPath, pkg.Profile.Paths.Container, &pkg.Container); err != nil {
 		return nil, err
 	}
 
-	browserDataPath := filepath.Join(absoluteEnvPath, filepath.FromSlash(pkg.Binding.Storage.HostUserDataDir))
+	browserDataPath := filepath.Join(absoluteEnvPath, filepath.FromSlash(pkg.Profile.Paths.BrowserData))
 	if stat, err := os.Stat(browserDataPath); err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("browser-data/profile 不存在，环境包核心登录态资产缺失，不能自动创建")
@@ -204,15 +189,24 @@ func loadRunPackage(index *model.BrowserEnvIndex) (*runPackage, error) {
 	} else if !stat.IsDir() {
 		return nil, fmt.Errorf("browser-data/profile 不是目录")
 	}
+	if strings.TrimSpace(pkg.Binding.Storage.HostUserDataDir) != pkg.Profile.Paths.BrowserData {
+		return nil, fmt.Errorf("binding.storage.hostUserDataDir 与 profile.paths.browserData 不一致")
+	}
 	if pkg.Profile.Proxy.Enabled {
-		proxyPath := filepath.Join(absoluteEnvPath, filepath.FromSlash(pkg.Profile.Proxy.ConfigPath))
+		proxyPath, err := safePackagePath(absoluteEnvPath, pkg.Profile.Proxy.ConfigPath)
+		if err != nil {
+			return nil, err
+		}
 		bytes, err := os.ReadFile(proxyPath)
 		if err != nil {
 			return nil, fmt.Errorf("读取代理配置失败: %w", err)
 		}
 		pkg.ProxyConfig = string(bytes)
 	}
-	runtimeConfigPath := filepath.Join(absoluteEnvPath, filepath.FromSlash(pkg.Binding.Fingerprint.RuntimeConfigPath))
+	runtimeConfigPath, err := safePackagePath(absoluteEnvPath, pkg.Binding.Fingerprint.RuntimeConfigPath)
+	if err != nil {
+		return nil, err
+	}
 	if bytes, err := os.ReadFile(runtimeConfigPath); err == nil {
 		pkg.RuntimeConfigRaw = bytes
 	} else if !os.IsNotExist(err) {
@@ -229,8 +223,10 @@ func loadRunPackage(index *model.BrowserEnvIndex) (*runPackage, error) {
 // run 不能把一个损坏或身份不一致的环境包启动起来；
 // 这里重点检查 envId、镜像、端口、binding 存储路径和 identityHash，避免后续误用登录态目录。
 func validateRunPackage(pkg *runPackage) error {
-	if pkg.Profile.EnvID != pkg.Manifest.EnvID || pkg.Binding.Identity.UserID != pkg.Manifest.UserID {
-		return fmt.Errorf("profile/binding 与 manifest 不一致")
+	if pkg.Binding.Identity.EnvID != pkg.Profile.EnvID ||
+		pkg.Binding.Identity.UserID != pkg.Profile.UserID ||
+		pkg.Binding.Identity.RPAType != pkg.Profile.RPAType {
+		return fmt.Errorf("binding.identity 与 profile 不一致")
 	}
 	if strings.TrimSpace(pkg.Profile.Runtime.Image) == "" {
 		return fmt.Errorf("profile.runtime.image 不能为空")
@@ -242,13 +238,16 @@ func validateRunPackage(pkg *runPackage) error {
 		strings.TrimSpace(pkg.Binding.Storage.ContainerUserDataDir) == "" {
 		return fmt.Errorf("binding.storage 不能为空")
 	}
-	identity := buildBindingIdentityFromFacts(pkg.Manifest.EnvID, pkg.Manifest.UserID, pkg.Manifest.RPAType)
+	identity := buildBindingIdentityFromFacts(pkg.Profile.EnvID, pkg.Profile.UserID, pkg.Profile.RPAType)
 	identityHash, err := buildJSONHash(identity)
 	if err != nil {
 		return fmt.Errorf("重新计算 identityHash 失败: %w", err)
 	}
 	if identityHash != pkg.Binding.IdentityHash {
 		return fmt.Errorf("identityHash 与 binding 不一致")
+	}
+	if strings.TrimSpace(pkg.Profile.IdentityHash) != "" && identityHash != pkg.Profile.IdentityHash {
+		return fmt.Errorf("identityHash 与 profile 不一致")
 	}
 	return nil
 }
@@ -466,19 +465,19 @@ func finalizeRunPackage(edge *edgeService.Service, pkg *runPackage, deviceInfo *
 	pkg.Container.StoppedAt = nil
 	pkg.Container.UpdatedAt = now
 
-	pkg.Manifest.LastRuntime = model.ManifestLastRuntime{
+	pkg.Profile.LastRuntime = model.PackageLastRuntime{
 		DeviceArch:    &deviceArch,
 		DockerAPIURL:  &dockerAPIURL,
 		ContainerID:   &containerID,
 		ContainerName: &pkg.Container.ContainerName,
 		LastStartedAt: &now,
 	}
-	pkg.Manifest.UpdatedAt = now
+	pkg.Profile.Metadata.UpdatedAt = now
 
-	if err := writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, filepath.FromSlash(pkg.Manifest.Paths.Container)), pkg.Container); err != nil {
+	if err := writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, filepath.FromSlash(pkg.Profile.Paths.Container)), pkg.Container); err != nil {
 		return nil, internalError(err.Error())
 	}
-	if err := writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, "manifest.json"), pkg.Manifest); err != nil {
+	if err := writePackageJSON(pkg.AbsoluteEnvPath, pkg.Profile.Paths.Profile, pkg.Profile); err != nil {
 		return nil, internalError(err.Error())
 	}
 	timezoneStatus := ""
@@ -511,7 +510,7 @@ func finalizeRunPackage(edge *edgeService.Service, pkg *runPackage, deviceInfo *
 
 	containerName := pkg.Container.ContainerName
 	if err := browserEnvDao.NewRuntimeModelHandler().UpdateBrowserEnvRuntime(context.Background(), &model.BrowserEnvRuntimeUpdate{
-		EnvID:           pkg.Manifest.EnvID,
+		EnvID:           pkg.Profile.EnvID,
 		Status:          model.BrowserEnvStatusRunning,
 		ContainerID:     &containerID,
 		ContainerName:   &containerName,
@@ -526,7 +525,7 @@ func finalizeRunPackage(edge *edgeService.Service, pkg *runPackage, deviceInfo *
 	}
 
 	return &model.RunBrowserEnvResponse{
-		EnvID:          pkg.Manifest.EnvID,
+		EnvID:          pkg.Profile.EnvID,
 		ContainerID:    containerID,
 		ContainerName:  pkg.Container.ContainerName,
 		Image:          pkg.Profile.Runtime.Image,
@@ -564,16 +563,16 @@ func recreateContainerAfterTimezoneProbe(edge *edgeService.Service, pkg *runPack
 	}
 	reloaded, err := loadRunPackage(pkg.Index)
 	if err != nil {
-		_ = updateRunError(pkg.Manifest.EnvID, err.Error())
+		_ = updateRunError(pkg.Profile.EnvID, err.Error())
 		return nil, internalError(err.Error())
 	}
 	if err = ensureRunPortsAvailable(reloaded.Profile.Ports); err != nil {
-		_ = updateRunError(pkg.Manifest.EnvID, err.Error())
+		_ = updateRunError(pkg.Profile.EnvID, err.Error())
 		return nil, conflictError(err.Error())
 	}
 	createConfig, err := buildDockerCreateConfig(reloaded)
 	if err != nil {
-		_ = updateRunError(pkg.Manifest.EnvID, err.Error())
+		_ = updateRunError(pkg.Profile.EnvID, err.Error())
 		if _, ok := IsBusinessError(err); ok {
 			return nil, err
 		}
@@ -581,11 +580,11 @@ func recreateContainerAfterTimezoneProbe(edge *edgeService.Service, pkg *runPack
 	}
 	created, err := edge.CreateDockerContainer(reloaded.Container.ContainerName, createConfig)
 	if err != nil {
-		_ = updateRunError(pkg.Manifest.EnvID, err.Error())
+		_ = updateRunError(pkg.Profile.EnvID, err.Error())
 		return nil, remoteError(err.Error())
 	}
 	if _, err = edge.StartDockerContainer(created.ID); err != nil {
-		_ = updateRunError(pkg.Manifest.EnvID, err.Error())
+		_ = updateRunError(pkg.Profile.EnvID, err.Error())
 		return nil, remoteError(err.Error())
 	}
 	return finalizeRunPackage(edge, reloaded, deviceInfo, created.ID, false, remainingTimezoneRecreates, false)

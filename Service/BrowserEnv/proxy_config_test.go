@@ -101,7 +101,7 @@ func TestNormalizeProxyUpdateDisableIgnoresModeWhenConfigEmpty(t *testing.T) {
 	}
 }
 
-func TestNormalizeProxyUpdateImageOnly(t *testing.T) {
+func TestNormalizeProxyUpdateRejectsEmptyPatch(t *testing.T) {
 	pkg := &proxyConfigPackage{
 		Profile: model.ProfileFile{
 			Runtime: model.ProfileRuntime{
@@ -115,22 +115,10 @@ func TestNormalizeProxyUpdateImageOnly(t *testing.T) {
 		},
 		ProxyConfig: "mode: rule\nmixed-port: 7897\n",
 	}
-	param := &model.UpdateBrowserEnvProxyRequest{
-		Image: testStringPtr("crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64"),
-	}
+	param := &model.UpdateBrowserEnvProxyRequest{}
 
-	normalized, err := normalizeProxyUpdate(pkg, param)
-	if err != nil {
-		t.Fatalf("normalizeProxyUpdate returned error: %v", err)
-	}
-	if !normalized.Changed || !normalized.ImageChanged {
-		t.Fatal("expected image-only update to be marked changed")
-	}
-	if normalized.ProxyChanged {
-		t.Fatal("image-only update must not mark proxy changed")
-	}
-	if normalized.Image != *param.Image {
-		t.Fatalf("unexpected image: %s", normalized.Image)
+	if _, err := normalizeProxyUpdate(pkg, param); err == nil {
+		t.Fatal("expected empty proxy patch to be rejected")
 	}
 }
 

@@ -7,7 +7,7 @@ info:
     用户、节点列表、设备归属、设备编号等中心控制能力应放到未来 Private_Browser_Server。
 servers:
   - url: http://127.0.0.1:3300
-    description: 本地开发环境
+    description: 本地边缘服务
 paths:
   /health:
     get:
@@ -24,9 +24,9 @@ paths:
                 ok: true
                 status: healthy
                 service: private-browser-client
-                mode: dev
-                version: 0.1.7
-                configFile: /path/to/Settings/config-dev.yaml
+                mode: production
+                version: 0.1.8
+                configFile: /path/to/Settings/config-prod.yaml
                 dockerApi: http://127.0.0.1:2375
                 checkedAt: 1779956198
                 checks:
@@ -511,7 +511,6 @@ paths:
                     vnc: 9101
                   envPath: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
                   files:
-                    manifest: manifest.json
                     profile: profile.json
                     binding: binding.json
                     container: container.json
@@ -525,7 +524,7 @@ paths:
   /api/v1/edge/browser-envs/import-package:
     post:
       summary: 导入浏览器环境包
-      description: 上传本服务备份生成的标准 .tar.gz 环境包，或同格式的外部备份包。导入会校验单根目录、manifest、标准文件和 checksums；默认保留原 envId，若本机已存在同名环境包则拒绝。导入后重新分配本机 envSequence/CDP/VNC，并把容器运行态重置为 created，下一次 run 会重新执行容器内 timezone 探测。
+      description: 上传本服务备份生成的标准 .tar.gz 环境包，或同格式的外部备份包。导入会校验单根目录、profile.json、标准文件和 profile.package.checksums；默认保留原 envId，若本机已存在同名环境包则拒绝。导入后重新分配本机 envSequence/CDP/VNC，并把容器运行态重置为 created，下一次 run 会重新执行容器内 timezone 探测。
       tags: [Edge]
       requestBody:
         required: true
@@ -562,10 +561,38 @@ paths:
                   importedAt: 1779957193
         '409':
           description: 本机已存在同名 envId 或目标目录。
+  /api/v1/edge/browser-envs-rebuild/candidates:
+    get:
+      summary: 扫描可重建 SQLite 索引的环境包候选
+      description: 只读扫描 data/browser-envs/users 下的 profile.json，校验原子材料并返回候选状态；不写 SQLite、不修复文件、不启动 Docker。
+      tags: [Edge]
+      responses:
+        '200':
+          description: rebuild 候选列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserEnvRebuildCandidatesSuccess'
+  /api/v1/edge/browser-envs-rebuild/{envId}:
+    post:
+      summary: 从本机环境包目录重建单个 SQLite 索引
+      description: 只允许对原子完整的单个 envId 执行 rebuild-index；不启动 Docker、不拉镜像、不创建容器。端口会根据本机占用情况重新确认，Docker 已存在同 envId 或同 containerName 容器时拒绝。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      responses:
+        '200':
+          description: SQLite 索引重建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrowserEnvRebuildIndexSuccess'
+        '409':
+          description: envId 已存在索引，或 Docker 容器身份冲突。
   /api/v1/edge/browser-envs/{envId}:
     get:
       summary: 获取本地浏览器环境包详情
-      description: 从 SQLite 索引和本地环境包文件读取详情。响应包含 manifest/profile/binding/container、代理摘要、指纹摘要和一致性检查；不返回 proxy/clash.yaml 明文，也不返回 fingerprint raw。
+      description: 从 SQLite 索引和本地环境包文件读取详情。响应包含 profile/binding/container、代理摘要、指纹摘要和一致性检查；不返回 proxy/clash.yaml 明文，也不返回 fingerprint raw。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -595,12 +622,11 @@ paths:
                     hasBrowserData: true
                     createdAt: 1779956193
                     updatedAt: 1779956193
-                  manifest:
+                  profile:
                     envId: 318275706305908736_tk_918273645001
                     userId: "318275706305908736"
                     rpaType: tk
                     envSequence: 1
-                  profile:
                     name: tk-browser-001
                     runtime:
                       image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
@@ -627,13 +653,12 @@ paths:
                     runtimeConfig:
                       available: false
                   consistency:
-                    manifestMatchesIndex: true
+                    profileMatchesIndex: true
                     identityHashMatches: true
                     proxyConfigExists: true
                     browserDataExists: true
                     errors: []
                   files:
-                    manifest: manifest.json
                     profile: profile.json
                     binding: binding.json
                     container: container.json
@@ -648,7 +673,7 @@ paths:
                     webVncUrl: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
     delete:
       summary: 彻底删除本地浏览器环境包（SSE 任务）
-      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台物理删除环境包目录，包括 manifest/profile/binding/proxy/fingerprint/browser-data/profile，删除关联的已停止 Docker 容器，并移除 SQLite browser_envs 索引记录。该操作无法通过 rebuild-index 找回；不会删除浏览器镜像，也不会自动停止 running 容器。如果环境包仍在 running，任务会失败并在 SSE error 事件中返回原因。前端必须在调用前提示用户谨慎操作、删除后无法恢复。
+      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台物理删除环境包目录，包括 profile/binding/proxy/fingerprint/browser-data/profile，删除关联的已停止 Docker 容器，并移除 SQLite browser_envs 索引记录。该操作无法通过 rebuild-index 找回；不会删除浏览器镜像，也不会自动停止 running 容器。如果环境包仍在 running，任务会失败并在 SSE error 事件中返回原因。前端必须在调用前提示用户谨慎操作、删除后无法恢复。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -706,7 +731,7 @@ paths:
   /api/v1/edge/browser-envs/{envId}/stop:
     post:
       summary: 停止本地浏览器环境包（SSE 任务）
-      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台按 envId 停止环境包对应的本机 Docker 浏览器容器，并同步 container.json、manifest.lastRuntime 和 browser_envs 运行态字段。该接口不删除容器、镜像或 browser-data/profile 登录态目录。
+      description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台按 envId 停止环境包对应的本机 Docker 浏览器容器，并同步 container.json、profile.lastRuntime 和 browser_envs 运行态字段。该接口不删除容器、镜像或 browser-data/profile 登录态目录。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -736,6 +761,33 @@ paths:
                   resourceId: 318275706305908736_tk_918273645001
                   eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   message: 浏览器环境停止任务已创建
+  /api/v1/edge/browser-envs/{envId}/revalidate:
+    post:
+      summary: 重新校验 error 浏览器环境包（SSE 任务）
+      description: 管理员排查后使用的受控重新准入接口。只校验 profile.json、binding.json、proxy、fingerprint、browser-data/profile 原子材料、Docker 身份冲突和本机端口，并把 runtimeProtection/proxyRuntime 重置为 pending；不会启动容器、不会拉镜像、不会创建容器，也不会证明代理出口或 timezone 最终可用。只有 status=error 的环境包允许调用。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      responses:
+        '200':
+          description: SSE 任务已创建。最终 RevalidateBrowserEnvResponse 会出现在任务 done 事件 result 中。
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskStartSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  taskId: task_1770000000000000000_12345
+                  taskType: browser_env_revalidate
+                  status: queued
+                  resourceType: browser_env
+                  resourceId: 318275706305908736_tk_918273645001
+                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  message: 浏览器环境重新校验任务已创建
+        '409':
+          description: 环境包不是 error、原子材料不完整、Docker 容器仍在 running/restarting/paused，或存在容器身份冲突。
   /api/v1/edge/browser-envs/{envId}/backup:
     post:
       summary: 备份并清理本地浏览器环境包
@@ -755,7 +807,7 @@ paths:
   /api/v1/edge/browser-envs/{envId}/restore:
     post:
       summary: 从本机备份包恢复浏览器环境包
-      description: 从 SQLite 索引记录的 backupPath 读取本机备份包，校验 checksum 后恢复 browser-envs/{envId} 环境目录，并把容器运行态重置为 created。该接口不启动 Docker；恢复成功后调用 run 执行 RPA。
+      description: 从 SQLite 索引记录的 backupPath 读取本机备份包，校验 checksum 后恢复 browser-envs/{envId} 环境目录，并把容器运行态重置为 created。该接口不启动 Docker；恢复成功后删除本机备份 tar 并清空 SQLite backup 字段，下一步由调用方显式调用 run。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -770,8 +822,8 @@ paths:
           description: 环境包不是备份状态，或备份包 checksum 不匹配。
   /api/v1/edge/browser-envs/{envId}/proxy:
     patch:
-      summary: 修改环境包代理配置和运行镜像（SSE 任务）
-      description: 修改 profile.proxy、proxy/clash.yaml，也可以通过 image 修改 profile.runtime.image。代理配置不是热更新，镜像变更也必须重建容器；如果环境包正在 running，接口会快速返回 restartQueued=true、taskId、eventsUrl，并通过 SSE 后台 forceRecreate 重建容器，让配置修改对用户无感知。代理配置变化会递增 binding.version 并把 runtimeProtection 重置为 pending，不改变 identityHash，也不再返回配置摘要字段。非 running 或未发生变更时不返回 taskId。
+      summary: 修改环境包代理配置（SSE 任务）
+      description: 修改 profile.proxy 和 proxy/clash.yaml。代理配置不是热更新；如果环境包正在 running，接口会快速返回 restartQueued=true、taskId、eventsUrl，并通过 SSE 后台 forceRecreate 重建容器，让配置修改对用户无感知。代理配置变化会递增 binding.version 并把 runtimeProtection 重置为 pending，不改变 identityHash，也不再返回配置摘要字段。非 running 或未发生变更时不返回 taskId。镜像选择归 Server 或中心 ImagePolicy，不能通过本接口修改 profile.runtime.image。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -784,7 +836,6 @@ paths:
             example:
               enabled: true
               type: clash-verge
-              image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
               mode: global
               configBase64: bW9kZTogcnVsZQptaXhlZC1wb3J0OiA3ODk3Cg==
       responses:
@@ -892,7 +943,7 @@ paths:
   /api/v1/edge/browser-envs/{envId}/vnc-info:
     get:
       summary: 获取浏览器版 VNC 连接信息
-      description: 返回 envId 对应环境包的 VNC 端口、vnc:// 地址、WebSocket 地址和浏览器 Web VNC 页面地址。推荐前端使用 webVncUrl。
+      description: 仅在环境包 status=running 时返回 VNC 端口、vnc:// 地址、WebSocket 地址和浏览器 Web VNC 页面地址。推荐前端使用 webVncUrl；error/stopped/created 状态不会返回连接信息，避免把 Docker running 误判为业务可用。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -912,6 +963,18 @@ paths:
                   vncUrl: vnc://127.0.0.1:9101
                   wsUrl: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
                   webVncUrl: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+  /api/v1/edge/browser-envs/{envId}/vnc/ws:
+    get:
+      summary: noVNC WebSocket 代理
+      description: 将浏览器 noVNC 的 WebSocket 流量代理到当前 running 环境包的 VNC TCP 端口。目标端口只从 browser_envs 索引读取，不接受 query 传入；非 running 状态返回错误。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      responses:
+        '101':
+          description: WebSocket upgrade success
+        '409':
+          description: 环境包未运行，不能连接 VNC。
 components:
   parameters:
     ContainerId:
@@ -946,13 +1009,13 @@ components:
           example: private-browser-client
         mode:
           type: string
-          example: dev
+          example: production
         version:
           type: string
-          example: 0.1.7
+          example: 0.1.8
         configFile:
           type: string
-          example: /path/to/Settings/config-dev.yaml
+          example: /path/to/Settings/config-prod.yaml
         dockerApi:
           type: string
           example: http://127.0.0.1:2375
@@ -1544,6 +1607,44 @@ components:
         stoppedAt:
           type: integer
           example: 1779956893
+    RevalidateBrowserEnvResponse:
+      type: object
+      description: error 环境包重新准入后的状态摘要。revalidate 不启动容器、不拉镜像、不证明最终网络指纹可用；成功后只恢复到 created/stopped，runtimeProtection 仍为 pending。
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        status:
+          type: string
+          enum: [created, stopped]
+          example: created
+        containerStatus:
+          type: string
+          description: Docker 事实快照；missing 表示未发现可信容器。
+          example: missing
+        containerId:
+          type: string
+          nullable: true
+          example: abc123
+        containerName:
+          type: string
+          nullable: true
+          example: bv-318275706305908736-tk-918273645001
+        envSequence:
+          type: integer
+          example: 101
+        ports:
+          $ref: '#/components/schemas/BrowserEnvPorts'
+        runtimeProtectionStatus:
+          type: string
+          enum: [pending]
+          example: pending
+        revalidatedAt:
+          type: integer
+          example: 1779956993
+        message:
+          type: string
+          example: revalidate 通过：环境包原子材料完整，未发现可用容器，已恢复为 created；下一步需要显式 run
     DeleteBrowserEnvResponse:
       type: object
       description: 环境包彻底删除结果。DELETE 会删除环境包目录、browser-data/profile 和关联的已停止 Docker 容器，并移除 SQLite 索引记录；响应中的 status=deleted 只表示本次动作结果。
@@ -1631,7 +1732,7 @@ components:
           example: 环境包已备份，容器和源环境目录已删除，SQLite 索引保留为备份资产
     RestoreBrowserEnvResponse:
       type: object
-      description: 环境包恢复结果。restore 只恢复目录并重置容器运行态，不启动 Docker。
+      description: 环境包恢复结果。restore 只恢复目录并重置容器运行态，不启动 Docker；恢复成功后删除本机备份 tar 并清空 SQLite backup 字段。
       properties:
         envId:
           type: string
@@ -1657,6 +1758,72 @@ components:
         message:
           type: string
           example: 环境包已从备份恢复为可运行目录，下一步可调用 run
+    BrowserEnvRebuildCandidate:
+      type: object
+      description: rebuild-candidates 只读扫描结果。invalid 只能诊断，不能写入 SQLite。
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        userId:
+          type: string
+          example: "318275706305908736"
+        rpaType:
+          type: string
+          example: tk
+        name:
+          type: string
+          example: tk-browser-001
+        envPath:
+          type: string
+          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+        status:
+          type: string
+          enum: [created_atomic, verified_atomic, invalid]
+          example: created_atomic
+        indexed:
+          type: boolean
+          example: false
+        errors:
+          type: array
+          items:
+            type: string
+          example: []
+    BrowserEnvRebuildCandidatesResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 1
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BrowserEnvRebuildCandidate'
+    BrowserEnvRebuildIndexResponse:
+      type: object
+      description: rebuild-index 结果。不启动 Docker、不拉镜像、不创建容器。
+      properties:
+        envId:
+          type: string
+          example: 318275706305908736_tk_918273645001
+        userId:
+          type: string
+          example: "318275706305908736"
+        rpaType:
+          type: string
+          example: tk
+        envPath:
+          type: string
+          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+        status:
+          type: string
+          enum: [created]
+          example: created
+        ports:
+          $ref: '#/components/schemas/CreateBrowserEnvPorts'
+        rebuiltAt:
+          type: integer
+          example: 1779957493
     EdgeTask:
       type: object
       description: 边缘任务详情。第一版任务保存在内存中，主要用于 Docker pull/remove、容器 start/stop/restart、浏览器环境 run/stop/delete、running 状态 proxy/proxy-mode 后台重建试点。
@@ -1750,7 +1917,7 @@ components:
           example: 浏览器环境启动任务已创建
     UpdateBrowserEnvProxyRequest:
       type: object
-      description: PATCH 语义的代理配置与运行镜像请求。代理 YAML 必须通过 configBase64 传入，服务端解码后写入 proxy/clash.yaml；image 写入 profile.runtime.image。
+      description: PATCH 语义的代理配置请求。代理 YAML 必须通过 configBase64 传入，服务端解码后写入 proxy/clash.yaml；镜像选择不由本接口处理。
       properties:
         enabled:
           type: boolean
@@ -1759,10 +1926,6 @@ components:
           type: string
           description: 第一版仅支持 clash-verge。
           example: clash-verge
-        image:
-          type: string
-          description: 可选。浏览器环境包下一次 run 使用的 Docker 镜像；running 环境实际变化后会后台重建容器。
-          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
         mode:
           type: string
           enum: [rule, global, direct]
@@ -1853,10 +2016,6 @@ components:
       properties:
         index:
           $ref: '#/components/schemas/BrowserEnvIndex'
-        manifest:
-          type: object
-          description: manifest.json 的结构化内容。
-          additionalProperties: true
         profile:
           type: object
           description: profile.json 的结构化内容，不包含代理配置正文。
@@ -1917,7 +2076,7 @@ components:
     BrowserEnvConsistencyCheck:
       type: object
       properties:
-        manifestMatchesIndex:
+        profileMatchesIndex:
           type: boolean
           example: true
         identityHashMatches:
@@ -2210,6 +2369,20 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/RestoreBrowserEnvResponse'
+    BrowserEnvRebuildCandidatesSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BrowserEnvRebuildCandidatesResponse'
+    BrowserEnvRebuildIndexSuccess:
+      allOf:
+        - $ref: '#/components/schemas/StandardSuccess'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BrowserEnvRebuildIndexResponse'
     UpdateBrowserEnvProxySuccess:
       allOf:
         - $ref: '#/components/schemas/StandardSuccess'

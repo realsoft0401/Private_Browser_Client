@@ -90,6 +90,16 @@ func StopBrowserEnv(c *gin.Context) {
 	HttpResponse.ResponseSuccess(c, TaskService.NewStartResponse(task, publicRequestBase(c)))
 }
 
+// RevalidateBrowserEnv 对 error 环境执行受控重新准入。
+//
+// HTTP 层只创建 SSE 任务；真实校验在 Service 中完成，且不会启动容器或拉镜像。
+// 这样管理员可以在排查后重新准入，但前端不能把它当成“直接恢复可用”的快捷按钮。
+func RevalidateBrowserEnv(c *gin.Context) {
+	task := TaskService.Create("browser_env_revalidate", "browser_env", c.Param("envId"), "浏览器环境重新校验任务已创建")
+	go revalidateBrowserEnvTask(task.ID, c.Param("envId"))
+	HttpResponse.ResponseSuccess(c, TaskService.NewStartResponse(task, publicRequestBase(c)))
+}
+
 // BackupBrowserEnv 执行“备份资产”动作。
 //
 // Service 会生成本机 tar.gz 备份包，删除容器和源环境目录，并把 SQLite 索引改成 backed_up。
@@ -127,6 +137,31 @@ func ImportBrowserEnvPackage(c *gin.Context) {
 	defer file.Close()
 
 	result, err := NewService().ImportBrowserEnvPackage(file, header)
+	if err != nil {
+		writeBrowserEnvError(c, err)
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
+// ListBrowserEnvRebuildCandidates 只读扫描可重建 SQLite 索引的本机环境包目录。
+//
+// 该接口不写数据库、不修复文件，只返回候选状态和错误原因，避免坏目录自动进入系统。
+func ListBrowserEnvRebuildCandidates(c *gin.Context) {
+	result, err := NewService().ListBrowserEnvRebuildCandidates()
+	if err != nil {
+		writeBrowserEnvError(c, err)
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
+// RebuildBrowserEnvIndex 从原子完整的环境包目录重建单个 SQLite 索引。
+//
+// 该接口不启动 Docker、不拉镜像、不创建容器；它只把 profile/binding/proxy/fingerprint/browser-data
+// 校验通过的目录纳入 browser_envs 索引。
+func RebuildBrowserEnvIndex(c *gin.Context) {
+	result, err := NewService().RebuildBrowserEnvIndex(c.Param("envId"))
 	if err != nil {
 		writeBrowserEnvError(c, err)
 		return
@@ -263,6 +298,22 @@ func stopBrowserEnvTask(taskID string, envID string, param *model.StopBrowserEnv
 		return
 	}
 	TaskService.Done(taskID, "browser_env_stop", "浏览器环境停止完成", result)
+}
+
+// revalidateBrowserEnvTask 在后台执行异常环境重新准入。
+//
+// revalidate 可能访问 Docker、扫描环境包文件并回写多个 JSON/SQLite 字段，任务化后前端能稳定看到最终失败原因。
+func revalidateBrowserEnvTask(taskID string, envID string) {
+	TaskService.MarkRunning(taskID, "browser_env_revalidate", "开始重新校验异常浏览器环境", map[string]any{"envId": envID})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go TaskService.RunHeartbeat(ctx, taskID, "browser_env_revalidate", "浏览器环境重新校验仍在执行")
+	result, err := NewService().RevalidateBrowserEnv(envID)
+	if err != nil {
+		TaskService.Failed(taskID, "browser_env_revalidate", err.Error())
+		return
+	}
+	TaskService.Done(taskID, "browser_env_revalidate", "浏览器环境重新校验完成", result)
 }
 
 // deleteBrowserEnvTask 在后台执行彻底删除。

@@ -49,6 +49,9 @@ func (s *Service) BackupBrowserEnv(envID string) (*model.BackupBrowserEnvRespons
 	if index.Status == model.BrowserEnvStatusDeleted {
 		return nil, conflictError("环境包已删除，不能备份")
 	}
+	if index.Status == model.BrowserEnvStatusError {
+		return nil, conflictError("环境包处于 error，不能备份可能不完整或伪造的资产；请先修复并调用 revalidate")
+	}
 	if index.Status == model.BrowserEnvStatusRunning || index.ContainerStatus == model.BrowserEnvStatusRunning {
 		return nil, conflictError("环境包正在运行，请先停止后再备份")
 	}
@@ -60,7 +63,7 @@ func (s *Service) BackupBrowserEnv(envID string) (*model.BackupBrowserEnvRespons
 	if err != nil {
 		return nil, internalError(err.Error())
 	}
-	manifest, err := validateBackupSourcePackage(index, sourceEnvPath)
+	profile, err := validateBackupSourcePackage(index, sourceEnvPath)
 	if err != nil {
 		return nil, internalError(err.Error())
 	}
@@ -73,7 +76,7 @@ func (s *Service) BackupBrowserEnv(envID string) (*model.BackupBrowserEnvRespons
 		return nil, internalError(fmt.Sprintf("创建备份目录失败: %v", err))
 	}
 
-	result, err := buildPackageArchive(index, sourceEnvPath, manifest, "backup", buildBackupArchiveFileName)
+	result, err := buildPackageArchive(index, sourceEnvPath, profile, "backup", buildBackupArchiveFileName)
 	if err != nil {
 		return nil, err
 	}
@@ -202,8 +205,15 @@ func (s *Service) RestoreBrowserEnv(envID string) (*model.RestoreBrowserEnvRespo
 	if err != nil {
 		return nil, invalidError(err.Error())
 	}
-	restored, err := prepareRestoredPackage(stagingEnvPath, index)
+	envSequence, ports, err := restoreRuntimePorts(index)
 	if err != nil {
+		return nil, internalError(err.Error())
+	}
+	restored, err := prepareRestoredPackage(stagingEnvPath, index, envSequence, ports)
+	if err != nil {
+		return nil, err
+	}
+	if err = ensureNoDockerConflictForAdmission(index.EnvID, restored.Container.ContainerName); err != nil {
 		return nil, err
 	}
 
@@ -214,26 +224,42 @@ func (s *Service) RestoreBrowserEnv(envID string) (*model.RestoreBrowserEnvRespo
 	defer cleanupPartialEnvPackage(targetEnvPath, &created)
 
 	restoredAt := restored.Now
+	deletePendingPath, err := moveBackupArchiveToDeletePending(backupAbs, restoredAt)
+	if err != nil {
+		return nil, internalError(err.Error())
+	}
+	backupMoved := true
+	defer func() {
+		if !created && backupMoved {
+			_ = os.Rename(deletePendingPath, backupAbs)
+		}
+	}()
 	if err = handler.UpdateBrowserEnvBackupState(context.Background(), &model.BrowserEnvBackupStateUpdate{
 		EnvID:           index.EnvID,
 		Status:          model.BrowserEnvStatusCreated,
+		EnvSequence:     &envSequence,
+		CDPPort:         &ports.CDP,
+		VNCPort:         &ports.VNC,
 		ContainerID:     nil,
 		ContainerStatus: model.BrowserEnvContainerStatusUnknown,
 		MonitorStatus:   model.BrowserEnvMonitorStatusUnknown,
 		LastError:       nil,
 		HasBrowserData:  true,
-		BackupPath:      index.BackupPath,
-		BackupChecksum:  index.BackupChecksum,
-		BackupSize:      index.BackupSize,
-		BackupAt:        index.BackupAt,
-		BackupVersion:   index.BackupVersion,
+		BackupPath:      nil,
+		BackupChecksum:  nil,
+		BackupSize:      nil,
+		BackupAt:        nil,
+		BackupVersion:   nil,
 		LastRestoredAt:  &restoredAt,
 		UpdatedAt:       restoredAt,
 	}); err != nil {
 		return nil, internalError(err.Error())
 	}
-
 	created = true
+	if err = os.Remove(deletePendingPath); err != nil && !os.IsNotExist(err) {
+		return nil, internalError(fmt.Sprintf("恢复已完成，但删除备份临时文件失败: %v", err))
+	}
+	backupMoved = false
 	return &model.RestoreBrowserEnvResponse{
 		EnvID:      index.EnvID,
 		UserID:     index.UserID,
@@ -247,60 +273,50 @@ func (s *Service) RestoreBrowserEnv(envID string) (*model.RestoreBrowserEnvRespo
 }
 
 type restoredPackage struct {
-	Manifest model.ManifestFile
-	Profile  model.ProfileFile
-	Now      int64
+	Profile   model.ProfileFile
+	Container model.ContainerFile
+	Now       int64
 }
 
 // prepareRestoredPackage 校验备份包并改写成本机可运行状态。
 //
 // restore 和 import 的区别是：restore 面向本机已有资产索引，必须沿用当前 envSequence/CDP/VNC，
 // 不能像外部导入那样新建索引或重新分配 envId。
-func prepareRestoredPackage(stagingEnvPath string, index *model.BrowserEnvIndex) (*restoredPackage, error) {
-	var manifest model.ManifestFile
-	if err := readJSONFile(filepath.Join(stagingEnvPath, "manifest.json"), &manifest); err != nil {
-		return nil, invalidError(fmt.Sprintf("读取 manifest 失败: %v", err))
-	}
-	if err := validateImportedManifest(stagingEnvPath, manifest); err != nil {
+func prepareRestoredPackage(stagingEnvPath string, index *model.BrowserEnvIndex, envSequence int, ports model.BrowserEnvPorts) (*restoredPackage, error) {
+	atomic, err := loadAndValidateAtomicPackage(stagingEnvPath)
+	if err != nil {
 		return nil, err
 	}
-	if err := validatePackageChecksums(stagingEnvPath, manifest.Checksums); err != nil {
+	profile := atomic.Profile
+	if err := validateImportedProfile(stagingEnvPath, profile); err != nil {
 		return nil, err
 	}
-	if manifest.EnvID != index.EnvID || manifest.UserID != index.UserID || manifest.RPAType != index.RPAType {
+	if err := validatePackageChecksums(stagingEnvPath, profile.Package.Checksums); err != nil {
+		return nil, err
+	}
+	if profile.EnvID != index.EnvID || profile.UserID != index.UserID || profile.RPAType != index.RPAType {
 		return nil, invalidError("备份包与 SQLite 环境资产索引不一致")
 	}
 
-	var profile model.ProfileFile
-	var binding model.BindingFile
-	var container model.ContainerFile
-	if err := readJSONFile(filepath.Join(stagingEnvPath, filepath.FromSlash(manifest.Paths.Profile)), &profile); err != nil {
-		return nil, invalidError(fmt.Sprintf("读取 profile 失败: %v", err))
-	}
-	if err := readJSONFile(filepath.Join(stagingEnvPath, filepath.FromSlash(manifest.Paths.Binding)), &binding); err != nil {
-		return nil, invalidError(fmt.Sprintf("读取 binding 失败: %v", err))
-	}
-	if err := readJSONFile(filepath.Join(stagingEnvPath, filepath.FromSlash(manifest.Paths.Container)), &container); err != nil {
-		return nil, invalidError(fmt.Sprintf("读取 container 失败: %v", err))
+	binding := atomic.Binding
+	container := atomic.Container
+	if !atomic.HasContainerFile {
+		container = model.ContainerFile{
+			EnvID: profile.EnvID,
+			Image: profile.Runtime.Image,
+		}
 	}
 
 	now := time.Now().Unix()
-	ports := model.BrowserEnvPorts{CDP: index.CDPPort, VNC: index.VNCPort}
 	containerName := "bv-" + strings.ReplaceAll(index.EnvID, "_", "-")
 	if index.ContainerName != nil && strings.TrimSpace(*index.ContainerName) != "" {
 		containerName = strings.TrimSpace(*index.ContainerName)
 	}
 
-	manifest.EnvSequence = index.EnvSequence
-	manifest.LastRuntime = model.ManifestLastRuntime{}
-	manifest.PackageVersion = nil
-	manifest.ExportedAt = nil
-	manifest.ExportSource = nil
-	manifest.ExportAction = ""
-	manifest.Checksums = nil
-	manifest.UpdatedAt = now
-	profile.EnvSequence = index.EnvSequence
+	profile.EnvSequence = envSequence
 	profile.Ports = ports
+	profile.LastRuntime = model.PackageLastRuntime{}
+	profile.Package = model.ProfilePackageMetadata{}
 	profile.Metadata.UpdatedAt = now
 	container.ContainerName = containerName
 	container.ContainerID = nil
@@ -314,35 +330,47 @@ func prepareRestoredPackage(stagingEnvPath string, index *model.BrowserEnvIndex)
 	container.Labels = map[string]string{
 		"bv.project":       "private-browser-client",
 		"bv.role":          "browser-env",
-		"bv.envId":         manifest.EnvID,
-		"bv.userId":        manifest.UserID,
-		"bv.rpaType":       manifest.RPAType,
+		"bv.envId":         profile.EnvID,
+		"bv.userId":        profile.UserID,
+		"bv.rpaType":       profile.RPAType,
 		"bv.schemaVersion": fmt.Sprintf("%d", model.SchemaVersion),
 	}
 	binding.RuntimeProtection.TimezoneStatus = "pending"
 	binding.UpdatedAt = now
 
-	if err := writePackageJSON(stagingEnvPath, manifest.Paths.Profile, profile); err != nil {
+	if err := writePackageJSON(stagingEnvPath, profile.Paths.Profile, profile); err != nil {
 		return nil, internalError(err.Error())
 	}
-	if err := writePackageJSON(stagingEnvPath, manifest.Paths.Binding, binding); err != nil {
+	if err := writePackageJSON(stagingEnvPath, profile.Paths.Binding, binding); err != nil {
 		return nil, internalError(err.Error())
 	}
-	if err := writePackageJSON(stagingEnvPath, manifest.Paths.Container, container); err != nil {
+	if err := writePackageJSON(stagingEnvPath, profile.Paths.Container, container); err != nil {
 		return nil, internalError(err.Error())
 	}
-	if err := writeTimezoneProbePending(stagingEnvPath, manifest.Paths.ProxyRuntime); err != nil {
-		return nil, internalError(err.Error())
-	}
-	if err := writeJSONFile(filepath.Join(stagingEnvPath, "manifest.json"), manifest); err != nil {
+	if err := writeTimezoneProbePending(stagingEnvPath, profile.Paths.ProxyRuntime); err != nil {
 		return nil, internalError(err.Error())
 	}
 
 	return &restoredPackage{
-		Manifest: manifest,
-		Profile:  profile,
-		Now:      now,
+		Profile:   profile,
+		Container: container,
+		Now:       now,
 	}, nil
+}
+
+// moveBackupArchiveToDeletePending 先把备份 tar 改名为待删除文件，再更新 SQLite。
+//
+// 设计来源：
+// - 用户确认 restore 成功后应删除备份包，避免恢复和紧急导入的语义分裂；
+// - 但 SQLite 更新失败时不能丢失唯一备份资产，所以这里先 rename，DB 失败时由 defer 尝试改回；
+// - rename 在同目录内是原子动作，比直接删除更容易处理失败回滚。
+func moveBackupArchiveToDeletePending(backupAbs string, restoredAt int64) (string, error) {
+	pendingPath := fmt.Sprintf("%s.restored-%d.delete-pending", backupAbs, restoredAt)
+	_ = os.Remove(pendingPath)
+	if err := os.Rename(backupAbs, pendingPath); err != nil {
+		return "", fmt.Errorf("移动备份包到待删除状态失败: %w", err)
+	}
+	return pendingPath, nil
 }
 
 // managedBackupArchivePath 生成本机备份包固定路径。

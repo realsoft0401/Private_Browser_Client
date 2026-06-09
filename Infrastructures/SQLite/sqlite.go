@@ -3,8 +3,10 @@ package SQLite
 import (
 	"database/sql"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -33,7 +35,10 @@ func Init() error {
 		return fmt.Errorf("create data dir failed: %w", err)
 	}
 
-	dbPath := filepath.Join(dataDir, fmt.Sprintf("private_browser_client-%s.db", Settings.Conf.Env))
+	dbPath := filepath.Join(dataDir, "private_browser_client.db")
+	if err := migrateLegacyEnvDatabase(dataDir, dbPath); err != nil {
+		return err
+	}
 	db, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_busy_timeout=5000")
 	if err != nil {
 		return fmt.Errorf("open sqlite failed: %w", err)
@@ -53,6 +58,81 @@ func Init() error {
 		return err
 	}
 	return nil
+}
+
+// migrateLegacyEnvDatabase 将早期按 ENV 分库的 SQLite 复制到统一生产库。
+//
+// 设计来源：
+// - 用户明确指出 Edge Client 后期没有开发/测试/生产运行模式，都是生产口径；
+// - 早期 `private_browser_client-dev.db` / `-test.db` / `-docker.db` 会让切换配置文件后看起来“数据掉了”；
+// - 因此从 2026-06-09 起统一使用 `data/private_browser_client.db`。
+//
+// 职责边界：
+// - 只在统一库不存在时复制一个已有旧库，避免覆盖正式库；
+// - 不合并多个旧库，多个旧库同时存在时优先当前 ENV 对应旧库，再按 docker/prod/dev/test 顺序兜底；
+// - 复制失败直接阻断启动，让管理员知道数据迁移没有成功。
+func migrateLegacyEnvDatabase(dataDir string, targetPath string) error {
+	if _, err := os.Stat(targetPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("检查统一 SQLite 数据库失败: %w", err)
+	}
+	legacyPath := findLegacyEnvDatabase(dataDir)
+	if legacyPath == "" {
+		return nil
+	}
+	source, err := os.Open(legacyPath)
+	if err != nil {
+		return fmt.Errorf("打开旧 SQLite 数据库失败 %s: %w", legacyPath, err)
+	}
+	defer source.Close()
+	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
+	if err != nil {
+		return fmt.Errorf("创建统一 SQLite 数据库失败 %s: %w", targetPath, err)
+	}
+	cleanup := true
+	defer func() {
+		_ = target.Close()
+		if cleanup {
+			_ = os.Remove(targetPath)
+		}
+	}()
+	if _, err = io.Copy(target, source); err != nil {
+		return fmt.Errorf("复制旧 SQLite 数据库失败: %w", err)
+	}
+	if err = target.Sync(); err != nil {
+		return fmt.Errorf("同步统一 SQLite 数据库失败: %w", err)
+	}
+	cleanup = false
+	return nil
+}
+
+func findLegacyEnvDatabase(dataDir string) string {
+	seen := map[string]struct{}{}
+	candidates := make([]string, 0, 6)
+	add := func(env string) {
+		env = strings.TrimSpace(env)
+		if env == "" {
+			return
+		}
+		path := filepath.Join(dataDir, fmt.Sprintf("private_browser_client-%s.db", env))
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		candidates = append(candidates, path)
+	}
+	add(Settings.Conf.Env)
+	add("docker")
+	add("prod")
+	add("dev")
+	add("test")
+	for _, path := range candidates {
+		if stat, err := os.Stat(path); err == nil && !stat.IsDir() {
+			return path
+		}
+	}
+	return ""
 }
 
 // Close 关闭 SQLite 连接。

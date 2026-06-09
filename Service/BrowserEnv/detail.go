@@ -11,7 +11,6 @@ import (
 
 	browserEnvDao "private_browser_client/Dao/BrowserEnv"
 	model "private_browser_client/Models/BrowserEnv"
-	"private_browser_client/Settings"
 )
 
 // GetBrowserEnvDetail 返回单个环境包的结构化详情。
@@ -22,7 +21,7 @@ import (
 // - 环境包的主事实仍是 SQLite 索引 + 本地文件，不做 Docker 实时探测。
 //
 // 职责边界：
-// - 读取 browser_envs 索引，再按 envPath 读取 manifest/profile/binding/container/fingerprint/proxy runtime；
+// - 读取 browser_envs 索引，再按 envPath 读取 profile/binding/container/fingerprint/proxy runtime；
 // - 返回代理和指纹摘要，但不返回 proxy/clash.yaml 正文或 fingerprint raw；
 // - 只做轻量一致性检查，不修改文件，不启动容器，不刷新 Docker 状态。
 func (s *Service) GetBrowserEnvDetail(envID string, httpBase string, wsBase string) (*model.BrowserEnvDetailResponse, error) {
@@ -63,16 +62,16 @@ func (s *Service) GetBrowserEnvDetail(envID string, httpBase string, wsBase stri
 //
 // 设计来源：
 // - 新备份流程会删除 browser-envs/{envId} 源目录，但保留 SQLite 索引用于恢复和下载；
-// - 如果详情接口继续强读 manifest/profile，就会把正常 backed_up 状态误报成服务错误；
+// - 如果详情接口继续强读 profile，就会把正常 backed_up 状态误报成服务错误；
 // - 因此这里明确返回“目录已释放，需要 restore”的一致性信息，不伪造配置文件内容。
 func buildBackedUpBrowserEnvDetail(index *model.BrowserEnvIndex) *model.BrowserEnvDetailResponse {
 	return &model.BrowserEnvDetailResponse{
 		Index: index,
 		Consistency: model.BrowserEnvConsistencyCheck{
-			ManifestMatchesIndex: false,
-			IdentityHashMatches:  false,
-			ProxyConfigExists:    false,
-			BrowserDataExists:    false,
+			ProfileMatchesIndex: false,
+			IdentityHashMatches: false,
+			ProxyConfigExists:   false,
+			BrowserDataExists:   false,
 			Errors: []string{
 				"环境包已备份，源环境目录已释放；请先 restore 后再查看完整文件详情",
 			},
@@ -83,65 +82,46 @@ func buildBackedUpBrowserEnvDetail(index *model.BrowserEnvIndex) *model.BrowserE
 
 // loadBrowserEnvDetail 从环境包目录读取详情文件。
 //
-// 这里不复用 loadRunPackage，是因为 run 会创建 browser-data/profile 并强校验 identityHash；
+// 这里不复用 loadRunPackage，是因为 run 会强校验 identityHash 和运行材料；
 // 详情页需要先把事实展示出来，即使某些文件缺失，也应该通过 consistency.errors 告诉前端问题在哪里。
 func loadBrowserEnvDetail(index *model.BrowserEnvIndex) (*model.BrowserEnvDetailResponse, error) {
-	if index == nil {
-		return nil, fmt.Errorf("环境包索引不能为空")
-	}
-	if Settings.Conf.ProjectRoot == "" {
-		return nil, fmt.Errorf("project root 不能为空")
-	}
-
-	envPath := filepath.Join(Settings.Conf.ProjectRoot, filepath.FromSlash(index.EnvPath))
-	if stat, err := os.Stat(envPath); err != nil {
-		return nil, fmt.Errorf("环境包目录不存在: %w", err)
-	} else if !stat.IsDir() {
-		return nil, fmt.Errorf("环境包路径不是目录")
-	}
-
-	var manifest model.ManifestFile
-	if err := readJSONFile(filepath.Join(envPath, "manifest.json"), &manifest); err != nil {
-		return nil, err
-	}
-	var profile model.ProfileFile
-	if err := readPackageJSON(envPath, manifest.Paths.Profile, &profile); err != nil {
+	envPath, profile, err := loadPackageProfileFromIndex(index)
+	if err != nil {
 		return nil, err
 	}
 	var binding model.BindingFile
-	if err := readPackageJSON(envPath, manifest.Paths.Binding, &binding); err != nil {
+	if err := readPackageJSON(envPath, profile.Paths.Binding, &binding); err != nil {
 		return nil, err
 	}
 	var container model.ContainerFile
-	if err := readPackageJSON(envPath, manifest.Paths.Container, &container); err != nil {
+	if err := readPackageJSON(envPath, profile.Paths.Container, &container); err != nil {
 		return nil, err
 	}
 
-	proxyDetail, proxyConfigText, proxyConfigExists, err := readProxyDetail(envPath, profile, manifest.Paths)
+	proxyDetail, proxyConfigText, proxyConfigExists, err := readProxyDetail(envPath, profile, profile.Paths)
 	if err != nil {
 		return nil, err
 	}
-	fingerprintDetail, err := readFingerprintDetail(envPath, manifest.Paths)
+	fingerprintDetail, err := readFingerprintDetail(envPath, profile.Paths)
 	if err != nil {
 		return nil, err
 	}
 
-	consistency := buildDetailConsistency(index, envPath, manifest, profile, binding, proxyConfigText, proxyConfigExists)
+	consistency := buildDetailConsistency(index, envPath, profile, binding, proxyConfigText, proxyConfigExists)
 	return &model.BrowserEnvDetailResponse{
-		Manifest:    manifest,
 		Profile:     profile,
 		Binding:     toBindingDetail(binding),
 		Container:   container,
 		Proxy:       proxyDetail,
 		Fingerprint: fingerprintDetail,
 		Consistency: consistency,
-		Files:       buildDetailFiles(manifest.Paths),
+		Files:       buildDetailFiles(profile.Paths),
 	}, nil
 }
 
 // readPackageJSON 在环境包根目录下安全读取相对路径 JSON。
 //
-// manifest 里的路径来自本机生成，但后续环境包可导入，不能默认信任路径不会越界。
+// profile 里的路径来自本机生成，但后续环境包可导入，不能默认信任路径不会越界。
 func readPackageJSON(envPath string, relativePath string, target any) error {
 	path, err := safePackagePath(envPath, relativePath)
 	if err != nil {
@@ -152,7 +132,7 @@ func readPackageJSON(envPath string, relativePath string, target any) error {
 
 // safePackagePath 把环境包内相对路径转换成绝对路径，并挡住路径逃逸。
 //
-// 这个保护是为了后续导入环境包做准备：manifest 里的相对路径不能通过 ../ 读到环境包外部。
+// 这个保护是为了后续导入环境包做准备：profile 里的相对路径不能通过 ../ 读到环境包外部。
 func safePackagePath(envPath string, relativePath string) (string, error) {
 	relativePath = strings.TrimSpace(relativePath)
 	if relativePath == "" {
@@ -175,7 +155,7 @@ func safePackagePath(envPath string, relativePath string) (string, error) {
 // readProxyDetail 读取代理配置摘要。
 //
 // 代理正文只用于计算 hash 和 size，不进入响应体；代理修改要走专门 API，不能让详情接口承担编辑职责。
-func readProxyDetail(envPath string, profile model.ProfileFile, paths model.ManifestPaths) (model.BrowserEnvProxyDetail, string, bool, error) {
+func readProxyDetail(envPath string, profile model.ProfileFile, paths model.PackagePaths) (model.BrowserEnvProxyDetail, string, bool, error) {
 	detail := model.BrowserEnvProxyDetail{
 		Enabled:    profile.Proxy.Enabled,
 		Type:       profile.Proxy.Type,
@@ -214,7 +194,7 @@ func readProxyDetail(envPath string, profile model.ProfileFile, paths model.Mani
 // readFingerprintDetail 读取指纹摘要。
 //
 // snapshot.raw 和 backup.raw 不进入响应体；详情只展示状态、评分和可恢复指纹字段。
-func readFingerprintDetail(envPath string, paths model.ManifestPaths) (model.BrowserEnvFingerprintDetail, error) {
+func readFingerprintDetail(envPath string, paths model.PackagePaths) (model.BrowserEnvFingerprintDetail, error) {
 	var snapshot model.FingerprintSnapshotFile
 	if err := readOptionalPackageJSON(envPath, paths.FingerprintSnapshot, &snapshot); err != nil {
 		return model.BrowserEnvFingerprintDetail{}, err
@@ -303,30 +283,27 @@ func readFingerprintRuntimeConfig(envPath string, relativePath string) (model.Br
 // buildDetailConsistency 生成详情页轻量一致性检查结果。
 //
 // 这里不访问 Docker，也不修复文件；它只是帮助前端和开发者判断“数据库索引”和“环境包文件”是否一致。
-func buildDetailConsistency(index *model.BrowserEnvIndex, envPath string, manifest model.ManifestFile, profile model.ProfileFile, binding model.BindingFile, proxyConfigText string, proxyConfigExists bool) model.BrowserEnvConsistencyCheck {
+func buildDetailConsistency(index *model.BrowserEnvIndex, envPath string, profile model.ProfileFile, binding model.BindingFile, proxyConfigText string, proxyConfigExists bool) model.BrowserEnvConsistencyCheck {
 	result := model.BrowserEnvConsistencyCheck{
-		ManifestMatchesIndex: manifest.EnvID == index.EnvID && manifest.UserID == index.UserID && manifest.RPAType == index.RPAType,
-		ProxyConfigExists:    proxyConfigExists,
-		BrowserDataExists:    pathExists(filepath.Join(envPath, filepath.FromSlash(manifest.Paths.BrowserData))),
-		Errors:               []string{},
+		ProfileMatchesIndex: profile.EnvID == index.EnvID && profile.UserID == index.UserID && profile.RPAType == index.RPAType,
+		ProxyConfigExists:   proxyConfigExists,
+		BrowserDataExists:   pathExists(filepath.Join(envPath, filepath.FromSlash(profile.Paths.BrowserData))),
+		Errors:              []string{},
 	}
-	if !result.ManifestMatchesIndex {
-		result.Errors = append(result.Errors, "manifest 与数据库索引不一致")
+	if !result.ProfileMatchesIndex {
+		result.Errors = append(result.Errors, "profile 与数据库索引不一致")
 	}
-	if profile.EnvID != manifest.EnvID || profile.RPAType != manifest.RPAType {
-		result.Errors = append(result.Errors, "profile 与 manifest 不一致")
+	if binding.Identity.EnvID != profile.EnvID || binding.Identity.UserID != profile.UserID || binding.Identity.RPAType != profile.RPAType {
+		result.Errors = append(result.Errors, "binding 与 profile 不一致")
 	}
-	if binding.Identity.UserID != manifest.UserID || binding.Identity.RPAType != manifest.RPAType {
-		result.Errors = append(result.Errors, "binding 与 manifest 不一致")
-	}
-	identity := buildBindingIdentityFromFacts(manifest.EnvID, manifest.UserID, manifest.RPAType)
+	identity := buildBindingIdentityFromFacts(profile.EnvID, profile.UserID, profile.RPAType)
 	identityHash, err := buildJSONHash(identity)
 	if err != nil {
 		result.Errors = append(result.Errors, "重新计算 identityHash 失败: "+err.Error())
 	} else {
-		result.IdentityHashMatches = identityHash == binding.IdentityHash
+		result.IdentityHashMatches = identityHash == binding.IdentityHash && strings.TrimSpace(profile.IdentityHash) == identityHash
 		if !result.IdentityHashMatches {
-			result.Errors = append(result.Errors, "identityHash 与 binding 不一致")
+			result.Errors = append(result.Errors, "identityHash 与 profile/binding 不一致")
 		}
 	}
 	if profile.Proxy.Enabled && !proxyConfigExists {
@@ -359,9 +336,8 @@ func toBindingDetail(binding model.BindingFile) model.BrowserEnvBindingDetail {
 	}
 }
 
-func buildDetailFiles(paths model.ManifestPaths) map[string]string {
+func buildDetailFiles(paths model.PackagePaths) map[string]string {
 	return map[string]string{
-		"manifest":                 "manifest.json",
 		"profile":                  paths.Profile,
 		"binding":                  paths.Binding,
 		"container":                paths.Container,

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -452,10 +451,10 @@ func syncOneBrowserEnvStatus(ctx context.Context, handler *browserEnvDao.StatusS
 		return false, nil
 	}
 	if next.filesChanged {
-		if err = writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, filepath.FromSlash(pkg.Manifest.Paths.Container)), pkg.Container); err != nil {
+		if err = writePackageJSON(pkg.AbsoluteEnvPath, pkg.Profile.Paths.Container, pkg.Container); err != nil {
 			return false, err
 		}
-		if err = writeJSONFile(filepath.Join(pkg.AbsoluteEnvPath, "manifest.json"), pkg.Manifest); err != nil {
+		if err = writePackageJSON(pkg.AbsoluteEnvPath, pkg.Profile.Paths.Profile, pkg.Profile); err != nil {
 			return false, err
 		}
 	}
@@ -466,32 +465,22 @@ func syncOneBrowserEnvStatus(ctx context.Context, handler *browserEnvDao.StatusS
 }
 
 type statusSyncPackage struct {
-	Manifest        model.ManifestFile
+	Profile         model.ProfileFile
 	Container       model.ContainerFile
 	AbsoluteEnvPath string
 }
 
 func loadStatusSyncPackage(index *model.BrowserEnvIndex) (*statusSyncPackage, error) {
-	if index == nil {
-		return nil, fmt.Errorf("环境包索引不能为空")
-	}
-	if Settings.Conf.ProjectRoot == "" {
-		return nil, fmt.Errorf("project root 不能为空")
-	}
-	absoluteEnvPath := filepath.Join(Settings.Conf.ProjectRoot, filepath.FromSlash(index.EnvPath))
-	var manifest model.ManifestFile
-	if err := readJSONFile(filepath.Join(absoluteEnvPath, "manifest.json"), &manifest); err != nil {
+	absoluteEnvPath, profile, err := loadPackageProfileFromIndex(index)
+	if err != nil {
 		return nil, err
 	}
-	if manifest.EnvID != index.EnvID {
-		return nil, fmt.Errorf("manifest.envId 与数据库索引不一致")
-	}
 	var container model.ContainerFile
-	if err := readPackageJSON(absoluteEnvPath, manifest.Paths.Container, &container); err != nil {
+	if err := readPackageJSON(absoluteEnvPath, profile.Paths.Container, &container); err != nil {
 		return nil, err
 	}
 	return &statusSyncPackage{
-		Manifest:        manifest,
+		Profile:         profile,
 		Container:       container,
 		AbsoluteEnvPath: absoluteEnvPath,
 	}, nil
@@ -537,16 +526,28 @@ func buildStatusSyncUpdate(index *model.BrowserEnvIndex, pkg *statusSyncPackage,
 			containerName = name
 		}
 		nextStatus, nextContainerStatus, lastError = classifyDockerContainerState(found.State)
-		if nextStatus == model.BrowserEnvStatusRunning && lastStartedAt == nil {
+		observedStatus := nextStatus
+		if index.Status == model.BrowserEnvStatusError {
+			nextStatus = model.BrowserEnvStatusError
+			lastError = preserveStatusSyncError(index.LastError)
+		}
+		if observedStatus == model.BrowserEnvStatusRunning && lastStartedAt == nil {
 			lastStartedAt = &now
 		}
-		if nextStatus != model.BrowserEnvStatusRunning && lastStoppedAt == nil {
+		if observedStatus != model.BrowserEnvStatusRunning && lastStoppedAt == nil {
 			lastStoppedAt = &now
 		}
 		pkg.Container.Image = found.Image
 	} else if index.Status == model.BrowserEnvStatusCreated && strings.TrimSpace(containerID) == "" {
 		nextStatus = model.BrowserEnvStatusCreated
 		nextContainerStatus = model.BrowserEnvContainerStatusUnknown
+	} else if index.Status == model.BrowserEnvStatusError {
+		nextStatus = model.BrowserEnvStatusError
+		nextContainerStatus = "missing"
+		lastError = preserveStatusSyncError(index.LastError)
+		if lastStoppedAt == nil {
+			lastStoppedAt = &now
+		}
 	} else {
 		nextStatus = model.BrowserEnvStatusStopped
 		nextContainerStatus = "missing"
@@ -577,22 +578,22 @@ func buildStatusSyncUpdate(index *model.BrowserEnvIndex, pkg *statusSyncPackage,
 		pkg.Container.Docker.APIURL = Settings.Conf.DockerConfig.APIURL
 	}
 
-	manifestFilesChanged := stringValue(pkg.Manifest.LastRuntime.ContainerID) != strings.TrimSpace(containerID) ||
-		stringValue(pkg.Manifest.LastRuntime.ContainerName) != strings.TrimSpace(containerName) ||
-		int64Value(pkg.Manifest.LastRuntime.LastStartedAt) != int64Value(lastStartedAt) ||
-		int64Value(pkg.Manifest.LastRuntime.LastStoppedAt) != int64Value(lastStoppedAt)
-	pkg.Manifest.LastRuntime.ContainerID = optionalString(containerID)
-	pkg.Manifest.LastRuntime.ContainerName = optionalString(containerName)
-	pkg.Manifest.LastRuntime.LastStartedAt = lastStartedAt
-	pkg.Manifest.LastRuntime.LastStoppedAt = lastStoppedAt
-	if manifestLastRuntimeDockerAPIURL(pkg.Manifest.LastRuntime) == "" {
+	profileRuntimeChanged := stringValue(pkg.Profile.LastRuntime.ContainerID) != strings.TrimSpace(containerID) ||
+		stringValue(pkg.Profile.LastRuntime.ContainerName) != strings.TrimSpace(containerName) ||
+		int64Value(pkg.Profile.LastRuntime.LastStartedAt) != int64Value(lastStartedAt) ||
+		int64Value(pkg.Profile.LastRuntime.LastStoppedAt) != int64Value(lastStoppedAt)
+	pkg.Profile.LastRuntime.ContainerID = optionalString(containerID)
+	pkg.Profile.LastRuntime.ContainerName = optionalString(containerName)
+	pkg.Profile.LastRuntime.LastStartedAt = lastStartedAt
+	pkg.Profile.LastRuntime.LastStoppedAt = lastStoppedAt
+	if packageLastRuntimeDockerAPIURL(pkg.Profile.LastRuntime) == "" {
 		dockerAPIURL := Settings.Conf.DockerConfig.APIURL
-		pkg.Manifest.LastRuntime.DockerAPIURL = optionalString(dockerAPIURL)
-		manifestFilesChanged = true
+		pkg.Profile.LastRuntime.DockerAPIURL = optionalString(dockerAPIURL)
+		profileRuntimeChanged = true
 	}
-	filesChanged = filesChanged || manifestFilesChanged
+	filesChanged = filesChanged || profileRuntimeChanged
 	if filesChanged {
-		pkg.Manifest.UpdatedAt = now
+		pkg.Profile.Metadata.UpdatedAt = now
 	}
 
 	lastCheckedAt := &now
@@ -618,6 +619,20 @@ func buildStatusSyncUpdate(index *model.BrowserEnvIndex, pkg *statusSyncPackage,
 		int64Value(index.LastStartedAt) != int64Value(runtime.LastStartedAt) ||
 		int64Value(index.LastStoppedAt) != int64Value(runtime.LastStoppedAt)
 	return statusSyncUpdate{runtime: runtime, dbChanged: dbChanged, filesChanged: filesChanged}
+}
+
+// preserveStatusSyncError 保留 error 生命周期的异常原因。
+//
+// 设计来源：
+// - 用户确认 container_status=running 不能代表环境可用，run 探测失败后的 status=error 必须由 revalidate 解除；
+// - 后台同步任务只能刷新 Docker 事实，不能因为看到容器 running/exited 就把异常环境改回正常生命周期；
+// - 因此 error 状态下 last_error 优先沿用原始失败原因，缺失时写清楚需要管理员 revalidate。
+func preserveStatusSyncError(current *string) *string {
+	if current != nil && strings.TrimSpace(*current) != "" {
+		return current
+	}
+	message := "环境包处于 error，后台状态同步只刷新 Docker 事实，不能解除异常；请管理员排查后调用 revalidate"
+	return &message
 }
 
 func classifyDockerContainerState(state string) (string, string, *string) {
@@ -708,7 +723,7 @@ func int64Value(value *int64) int64 {
 	return *value
 }
 
-func manifestLastRuntimeDockerAPIURL(runtime model.ManifestLastRuntime) string {
+func packageLastRuntimeDockerAPIURL(runtime model.PackageLastRuntime) string {
 	if runtime.DockerAPIURL == nil {
 		return ""
 	}
