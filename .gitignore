@@ -13,3 +13,4 @@ dist/
 # macOS / IDE 本地文件，不属于项目运行机制。
 .DS_Store
 .idea/
+fix*

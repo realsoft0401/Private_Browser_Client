@@ -15,7 +15,7 @@ import (
 
 // GetDeviceInfo 返回边缘服务所在机器的设备能力。
 //
-// 这个 HTTP 入口只做协议层处理，不保存数据库，也不要求 nodeId。
+// 这个 HTTP 入口只做协议层处理，不保存数据库，也不要求 clientId。
 // 这正是边缘服务和未来中心服务端的边界：边缘服务只说明“我这台机器是什么状态”。
 func GetDeviceInfo(c *gin.Context) {
 	result, err := NewEdgeService().GetDeviceInfo()

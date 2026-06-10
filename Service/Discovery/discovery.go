@@ -22,7 +22,7 @@ var (
 //
 // 设计来源：
 // - 用户希望 Server 自动扫描内网加入 Client，也支持手动加入；
-// - 用户明确不再使用 clientInstanceId，Client IP 是连接位置，nodeId 由中心服务发放；
+// - 用户明确不再使用 clientInstanceId，Client IP 是连接位置，clientId 由中心服务发放；
 // - UDP 报文必须带 discoveryMagic / protocolVersion / discoveryGroup，Server 只接收符合协议的 Client 广播。
 //
 // 职责边界：
@@ -47,7 +47,7 @@ type BroadcastPayload struct {
 // Broadcaster 管理 UDP discovery 后台广播循环。
 //
 // 这个后台任务只负责“把自己是谁、在哪里”广播出去，不负责接收 UDP、
-// 不维护节点列表，也不自动向 Server 注册。Server 收到广播后仍需要按 nodeId/IP 规则确认节点身份。
+// 不维护 Edge Client 列表，也不自动向 Server 注册。Server 收到广播后仍需要按 clientId/IP 规则确认身份。
 type Broadcaster struct {
 	config    *Settings.DiscoveryConfig
 	startedAt int64
@@ -182,7 +182,7 @@ func (b *Broadcaster) broadcastOnce() {
 // buildPayload 生成不含敏感信息的发现报文。
 //
 // Client IP 只是 Server 连接到本 Client 的网络位置，不是身份主键；
-// 如果 IP 后续变化，Server 应标记 IP 不一致并等待人工更新，而不是自动覆盖 nodeId 身份。
+// 如果 IP 后续变化，Server 应标记 IP 不一致并等待人工更新，而不是自动覆盖 clientId 身份。
 func (b *Broadcaster) buildPayload() BroadcastPayload {
 	clientIP := resolveAdvertiseHost(b.config)
 	baseURL := resolveAdvertiseBaseURL(b.config, clientIP)

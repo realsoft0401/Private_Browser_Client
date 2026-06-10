@@ -810,7 +810,7 @@ type PackagePaths struct {
 //
 // 这些字段只用于审计和排障，不参与 identityHash。
 type PackageLastRuntime struct {
-	EdgeNodeID    *string `json:"edgeNodeId"`
+	EdgeClientID  *string `json:"edgeClientId"`
 	DeviceArch    *string `json:"deviceArch"`
 	DockerAPIURL  *string `json:"dockerApiUrl"`
 	ContainerID   *string `json:"containerId"`

@@ -40,7 +40,7 @@ func Setup() *gin.Engine {
 	apiV1 := r.Group("/api/v1")
 	edge := apiV1.Group("/edge")
 
-	// Edge 域只暴露本机能力，不带 nodeId，也不访问中心节点表。
+	// Edge 域只暴露本机能力，不带 clientId，也不访问中心节点表。
 	edge.GET("/device-info", EdgeService.GetDeviceInfo)
 	edge.GET("/docker/status", EdgeService.GetDockerStatus)
 	edge.GET("/docker/images", EdgeService.GetDockerImages)

@@ -263,7 +263,7 @@ func (s *Service) RemoveDockerImage(param *edgeModel.RemoveImageRequest) ([]edge
 //
 // 设计来源：
 // - 边缘服务接下来要管理本机浏览器实例，容器 start 是最小生命周期动作；
-// - 这里直接调用 Docker Engine API，不依赖中心 nodeId，也不写数据库；
+// - 这里直接调用 Docker Engine API，不依赖中心 clientId，也不写数据库；
 // - Docker 返回 304 时说明容器已经处于运行态，统一转成 not-modified 响应，方便前端展示。
 func (s *Service) StartDockerContainer(containerID string) (*edgeModel.ContainerActionResult, error) {
 	return s.executeContainerAction(containerID, "start", nil)

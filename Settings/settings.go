@@ -78,12 +78,12 @@ type StatusSyncConfig struct {
 // 设计来源：
 // - 用户希望 Server 可以自动扫描内网并加入 Client，也可以手动添加；
 // - 用户进一步确认 UDP 广播必须有唯一识别口径，不能把内网里所有 UDP 包都抓来当节点；
-// - 当前收窄后不再使用 clientInstanceId，Client IP 是连接位置，nodeId 由中心服务发放。
+// - 当前收窄后不再使用 clientInstanceId，Client IP 是连接位置，clientId 由 Node Server 发放。
 //
 // 职责边界：
 // - 只广播本 Client 的服务位置、协议版本、分组和基础能力；
 // - 不广播用户、环境包、代理、指纹、登录态或宿主机敏感环境变量；
-// - IP 变化时由 Server 发现不一致后提示人工更新，不由 Client 自动覆盖中心节点身份。
+// - IP 变化时由 Server 发现不一致后提示人工更新，不由 Client 自动覆盖中心 clientId 身份。
 type DiscoveryConfig struct {
 	Enabled          bool   `mapstructure:"enabled"`
 	BroadcastAddress string `mapstructure:"broadcast_address"`

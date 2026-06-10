@@ -2,7 +2,7 @@
 
 边缘服务，运行在单台设备上，只负责获取和管理本机 Docker / 浏览器运行环境。
 
-当前已经明确：用户、节点列表、设备归属、设备编号、多节点调度等中心能力不再放在这里，后续应进入 `Private_Browser_Server`。
+当前已经明确：用户、Edge Client 列表、设备归属、设备编号、多节点调度等中心能力不再放在这里，后续应进入 `Private_Browser_Server`。
 
 ## 技术栈
 
@@ -58,7 +58,7 @@ Private_Browser_Client/
 - “本机”是相对 Client 进程所在服务器而言，不是相对前端或 Server 调用方而言。
 - Client 之间不互相发现、不互相调用、不维护其他服务器列表。
 - 多服务器统一管理只能由 `Private_Browser_Server` 完成。
-- Client 可以通过 UDP discovery/beacon 在独立内网里持续广播本机服务入口，帮助 Server 自动发现；这不代表 Client 维护节点列表或调用其它 Client。
+- Client 可以通过 UDP discovery/beacon 在独立内网里持续广播本机服务入口，帮助 Server 自动发现；这不代表 Client 维护Edge Client 列表或调用其它 Client。
 
 `Private_Browser_Client` 只负责本机：
 
@@ -76,7 +76,7 @@ Private_Browser_Client/
 - API Key、mTLS 等节点调用方鉴权。
 - 校验 `userId` 对应用户是否存在、是否有权限、是否拥有某台服务器。
 - 根据节点架构或商业策略选择浏览器运行镜像。
-- 多节点列表。
+- 多Edge Client 列表。
 - 设备归属关系。
 - 设备编号。
 - 多节点调度。
@@ -170,11 +170,14 @@ Client 后期需要增加 UDP discovery/beacon 能力，用于在独立内网中
 - UDP beacon 必须带平台识别字段，避免 Server 把内网里其它 UDP 报文抓进来。建议广播字段只包含非敏感摘要：discoveryMagic、protocolVersion、service、discoveryGroup、clientIp、hostname、baseUrl 或服务端口、clientVersion、startedAt、lastHeartbeatAt、capabilities。
 - `discoveryMagic/service/discoveryGroup` 用来标识“这是当前私有浏览器平台、当前内网发现域的 beacon”；Server 发现不匹配时必须直接丢弃。
 - Client 不再额外生成 `clientId`；在独立内网管理模式下，Client 的 IP 是 UDP discovery 的主要唯一识别来源，Server 结合 UDP 来源 IP、`baseUrl` 和 HTTP 探测结果进行去重。
-- Client IP / `baseUrl` 只表示本机在独立内网中的接入地址；`nodeId` 是 Server 落库后分配的中心身份。
-- Client 不生成、不保存、不要求 Edge API 请求携带 `nodeId`；多节点身份、设备编号、权限和审计都归 Server 管理。
-- Client 侧只需确保本机 IP、`baseUrl`、端口和 hostname 能被 Server 探测到；如果 IP 变化，Client 不自行处理中心节点身份，由 Server 标记 `identity_changed/ip_mismatch` 并提示管理员手动更新节点 IP。
-- IP 不一致时，即使 Client 仍在线，Server 也不能自动覆盖原节点 IP 或创建新节点；管理员确认后，才把原 `nodeId` 绑定到新的 clientIp/baseUrl。
-- 管理员确认更新 IP 后，Server 保留原 `nodeId`，只更新 `client_ip/base_url` 和健康摘要；历史任务、环境包聚合和审计记录仍绑定原 `nodeId`。Client 不参与这些中心记录调整。
+- Client IP / `baseUrl` 只表示本机在独立内网中的接入地址；`clientId` 是 Server 落库后分配的中心身份，内部保存为 `edge_clients.id`。
+- Client Edge 不生成、不保存、不要求 Edge API 请求携带 `clientId`；多 Client 身份、设备编号、权限和审计都归 Server 管理。
+- 三层服务统一口径：商业设备唯一 ID 统一叫 `clientId`，由 Node Server 分配并维护，不是 Client Edge 自生成的 `device_unique_id`。
+- Client 只负责暴露本机事实，例如 IP、baseUrl、hostname、os、arch、Docker 信息和健康检查。Node Server 探测确认后生成或绑定 `edge_clients.id`，并可在受控接口中下发或返回该 ID。
+- 设备 IP/baseUrl 变化或设备重置时，Client 不自行创建新的商业设备 ID，也不修改中心 clientId 身份；Node Server 应标记 `ip_mismatch/identity_changed/manual_update_required`，由管理员确认后保持原 `edge_clients.id` 不变并更新接入地址。
+- Client 侧只需确保本机 IP、`baseUrl`、端口和 hostname 能被 Server 探测到；如果 IP 变化，Client 不自行处理中心 clientId 身份，由 Server 标记 `identity_changed/ip_mismatch` 并提示管理员手动更新节点 IP。
+- IP 不一致时，即使 Client 仍在线，Server 也不能自动覆盖原节点 IP 或创建新节点；管理员确认后，才把原 `clientId` 绑定到新的 clientIp/baseUrl。
+- 管理员确认更新 IP 后，Server 保留原 `clientId`，只更新 `client_ip/base_url` 和健康摘要；历史任务、环境包聚合和审计记录仍绑定原 `clientId`。Client 不参与这些中心记录调整。
 - IP 更新后，Server 会重新调用 Client `/health`、`/api/v1/edge/device-info` 和 Docker 探测确认设备事实；如果架构、Docker 环境、hostname 或环境包列表差异过大，Server 应继续要求管理员确认。
 - beacon 端口、广播间隔、开关、网卡绑定地址应做成配置项，默认只在独立内网启用。
 - Server 收到 beacon 后必须再通过 HTTP API 探测 `/health`、`/api/v1/edge/device-info` 或等价接口，确认服务可达和设备能力后才能登记节点。
@@ -298,9 +301,9 @@ main.go
 | GET | `/api/v1/edge/docker/containers` | 获取本项目相关 Docker 容器，只返回边缘服务容器和浏览器环境容器 |
 | POST | `/api/v1/edge/docker/pull-image` | SSE 任务：拉取本机 Docker 镜像 |
 | POST | `/api/v1/edge/docker/remove-image` | SSE 任务：删除本机 Docker 镜像 |
-| POST | `/api/v1/edge/containers/:id/start` | SSE 任务：启动本机 Docker 容器 |
-| POST | `/api/v1/edge/containers/:id/stop` | SSE 任务：停止本机 Docker 容器，请求体可为空 |
-| POST | `/api/v1/edge/containers/:id/restart` | SSE 任务：重启本机 Docker 容器，请求体可为空 |
+| POST | `/api/v1/edge/containers/:clientId/start` | SSE 任务：启动本机 Docker 容器 |
+| POST | `/api/v1/edge/containers/:clientId/stop` | SSE 任务：停止本机 Docker 容器，请求体可为空 |
+| POST | `/api/v1/edge/containers/:clientId/restart` | SSE 任务：重启本机 Docker 容器，请求体可为空 |
 | GET | `/api/v1/edge/tasks/:taskId` | 查询 SSE 任务详情 |
 | GET | `/api/v1/edge/tasks/:taskId/events` | SSE 事件流，订阅任务进度和最终结果 |
 | GET | `/api/v1/edge/browser-envs` | 查询本机浏览器环境包索引列表，默认排除历史 deleted/归档记录 |
@@ -335,9 +338,9 @@ main.go
 
 裸 Docker 容器接口只保留为内网运维诊断和异常兜底：
 
-- `POST /api/v1/edge/containers/:id/start`
-- `POST /api/v1/edge/containers/:id/stop`
-- `POST /api/v1/edge/containers/:id/restart`
+- `POST /api/v1/edge/containers/:clientId/start`
+- `POST /api/v1/edge/containers/:clientId/stop`
+- `POST /api/v1/edge/containers/:clientId/restart`
 
 维护原则：
 
@@ -451,15 +454,15 @@ main.go
 - `backed_up` 时 `container_status=missing` 是正常结果，不是异常。
 - 前端和 Server 展示用户可见主状态时优先使用 `status`。
 - 运维排障时再结合 `container_status`、`monitor_status` 和 `last_error`。
-- 对单个 Edge 节点来说，Client 本地 `browser_envs` 是环境包资产事实源；Server 的 `server_browser_envs` 只是中心聚合缓存。Server 如果因为 Edge 失联、心跳超时或校验失败标记 `stale`，不代表 Client 本地环境包生命周期变成 `stale`。
+- 对单个 Edge Client来说，Client 本地 `browser_envs` 是环境包资产事实源；Server 的 `server_browser_envs` 只是中心聚合缓存。Server 如果因为 Edge 失联、心跳超时或校验失败标记 `stale`，不代表 Client 本地环境包生命周期变成 `stale`。
 - Server 在执行 `run/stop/backup/restore/delete/import-package` 前，应重新调用 Client API 校验当前状态，并以 Client 返回结果刷新中心缓存。
-- Server 创建环境包时必须在中心侧明确指定目标 `nodeId`；指定到当前这台 Client 的环境包，后续才会通过当前 Client 执行 run/stop/backup/restore/delete。
+- Server 创建环境包时必须在中心侧明确指定目标 `clientId`；指定到当前这台 Client 的环境包，后续才会通过当前 Client 执行 run/stop/backup/restore/delete。
 - Server 只有在该节点 `health_status=healthy` 且 `discovery_status=verified` 时，才应向当前 Client 下发创建和生命周期动作；`unhealthy/offline/stale/identity_changed/discovered` 都不能作为放行状态。
 - 节点处于 `unhealthy` 时，Server 不应向当前 Client 下发任何环境包生命周期动作，包括 run、stop、backup、restore、delete、import-package；当前原则是节点不带病工作，先修复节点再操作环境包。
 - V1 前期 Server 不应向 Client 下发批量生命周期动作；每个 run/stop/backup/restore/delete/import-package 都应对应一个明确环境包和一个独立任务。未来即使支持批量，也应由 Server 做容量评估、并发控制和逐个校验，Client 仍按单环境包动作执行。
 - 当前没有定时自动生命周期调度需求，Client 不应实现定时 run、定时 stop、定时 backup、定时 delete 或无人值守自动恢复。Client 本机后台状态同步任务只同步 Docker 事实和运行态摘要，不能升级成生命周期调度器。
 - 如果 Server 因节点状态不健康、架构 unknown、Docker 不可达或镜像策略不可用而拒绝动作，Client 不需要自行补做中心准入判断。
-- Client 不感知也不校验 `nodeId`，只处理发送到本机 Edge API 的环境包请求；Server 负责维护 `server_browser_envs.node_id` 与当前 Client IP/baseUrl 的绑定关系。
+- Client 不感知也不校验 `clientId`，只处理发送到本机 Edge API 的环境包请求；Server 负责维护 `server_browser_envs.client_id` 与当前 Client IP/baseUrl 的绑定关系，对外统一叫 clientId。
 
 ## 连接地址语义
 
@@ -572,7 +575,7 @@ Server 访问 Client 的边界：
 - 不修改代理、指纹、端口、identityHash、binding.version、runtimeProtection 或 proxyRuntime。
 - 不替代 run/stop/backup/restore/delete/proxy update 等生命周期接口。
 
-`discovery` 是 UDP 自动发现广播配置。Client 会按间隔向独立内网广播一帧 JSON，包含 `discoveryMagic`、`protocolVersion`、`service`、`discoveryGroup`、`clientIp`、`baseUrl`、`hostname`、`version`、`startedAt`、`lastHeartbeatAt` 和 `capabilities`。这些字段只服务 Server 自动发现和 HTTP 二次探测，不是鉴权，也不是中心节点身份。`advertise_host` 和 `advertise_base_url` 用于多网卡、容器网络或反向代理场景下手动指定 Server 应访问的内网地址。
+`discovery` 是 UDP 自动发现广播配置。Client 会按间隔向独立内网广播一帧 JSON，包含 `discoveryMagic`、`protocolVersion`、`service`、`discoveryGroup`、`clientIp`、`baseUrl`、`hostname`、`version`、`startedAt`、`lastHeartbeatAt` 和 `capabilities`。这些字段只服务 Server 自动发现和 HTTP 二次探测，不是鉴权，也不是中心 clientId 身份。`advertise_host` 和 `advertise_base_url` 用于多网卡、容器网络或反向代理场景下手动指定 Server 应访问的内网地址。
 
 ## 响应格式
 
@@ -989,9 +992,9 @@ running 环境：
 ```text
 POST   /api/v1/edge/docker/pull-image
 POST   /api/v1/edge/docker/remove-image
-POST   /api/v1/edge/containers/:id/start
-POST   /api/v1/edge/containers/:id/stop
-POST   /api/v1/edge/containers/:id/restart
+POST   /api/v1/edge/containers/:clientId/start
+POST   /api/v1/edge/containers/:clientId/stop
+POST   /api/v1/edge/containers/:clientId/restart
 POST   /api/v1/edge/browser-envs/:envId/run
 POST   /api/v1/edge/browser-envs/:envId/stop
 DELETE /api/v1/edge/browser-envs/:envId
@@ -1262,6 +1265,117 @@ Linux 脚本会固定增加：
 http://host.docker.internal:2375
 ```
 
+#### Linux / x86_64 / UDP 自动发现部署脚本
+
+如果该 Client 需要被 Node Server 通过 UDP discovery 自动发现，推荐在独立内网服务器上使用 `host` 网络部署 Client。
+
+设计原因：
+
+- Docker `bridge` 网络下，Client 容器向 `255.255.255.255:43000` 发 UDP 广播时，广播不一定能穿到宿主机所在局域网。
+- `host` 网络下，Client 的 UDP beacon 会直接从宿主机网络栈发出，更适合 Node Server 自动发现。
+- `host` 网络下不再需要 `-p 3300:3300`，但配置里的 Docker API 应改成 `http://127.0.0.1:2375`。
+
+路径约定：
+
+```text
+宿主机数据目录: /Business/data
+宿主机 host 网络配置: /Business/data/config-docker-host.yaml
+容器配置挂载位置: /app/Settings/config-docker.yaml
+容器数据挂载位置: /app/data
+```
+
+先在宿主机写入 host 网络专用配置：
+
+```bash
+mkdir -p /Business/data
+
+cat > /Business/data/config-docker-host.yaml <<'EOF'
+name: private-browser-client
+mode: production
+version: 0.1.8
+server:
+  host: 0.0.0.0
+  port: 3300
+  read_timeout_seconds: 15
+  write_timeout_seconds: 15
+docker:
+  api_url: http://127.0.0.1:2375
+status_sync:
+  enabled: true
+  interval_seconds: 5
+  watchdog_seconds: 15
+  stale_seconds: 30
+discovery:
+  enabled: true
+  broadcast_address: 255.255.255.255
+  port: 43000
+  interval_seconds: 5
+  magic: PRIVATE_BROWSER_CLIENT_DISCOVERY
+  protocol_version: 1
+  group: default
+  advertise_host: "192.168.10.119"
+  advertise_base_url: "http://192.168.10.119:3300"
+EOF
+```
+
+再重新部署 Client 容器：
+
+```bash
+IMAGE=crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge_server:0.1.8-amd64
+CONTAINER_NAME=private-browser-client
+DATA_DIR=/Business/data
+
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
+docker run -d \
+  --name "$CONTAINER_NAME" \
+  --label bv.project=private-browser-client \
+  --label bv.role=edge-service \
+  --restart unless-stopped \
+  --network host \
+  -v "${DATA_DIR}:/app/data" \
+  -v "${DATA_DIR}/config-docker-host.yaml:/app/Settings/config-docker.yaml:ro" \
+  --cap-add NET_ADMIN \
+  --device /dev/net/tun:/dev/net/tun \
+  "$IMAGE"
+```
+
+验证：
+
+```bash
+curl http://192.168.10.119:3300/health
+
+docker inspect private-browser-client \
+  --format 'name={{.Name}} network={{.HostConfig.NetworkMode}} binds={{.HostConfig.Binds}}'
+```
+
+期望健康检查里看到：
+
+```text
+dockerApi: http://127.0.0.1:2375
+status: healthy
+```
+
+在 Node Server 上验证 UDP discovery：
+
+```bash
+curl http://127.0.0.1:3400/api/v1/edge-clients/discovered \
+  -H 'X-Main-Account-Id: 906090001' \
+  -H 'X-Platform-User-Id: user_1780995561009325000_000001' \
+  -H 'X-Platform-Username: user_906090001' \
+  -H 'X-Platform-Role: owner'
+```
+
+期望出现：
+
+```text
+sourceIp: 192.168.10.119
+baseUrl: http://192.168.10.119:3300
+service: private-browser-client
+```
+
+如果必须继续使用 Docker `bridge` 网络，则不要依赖 `255.255.255.255` 广播穿透局域网。应把 `discovery.broadcast_address` 改成 Node Server 的内网 IP，让 Client 走 UDP 单播；或者由管理员继续手动添加 Client 节点。
+
 如果不用脚本，节点已经拉取了 amd64 镜像，等价命令是：
 
 ```bash
@@ -1305,7 +1419,7 @@ docker rm private-browser-client
 这些能力已经从 `Private_Browser_Client` 源码中移除，后续应进入 `Private_Browser_Server`：
 
 - `/api/v1/auth/*`
-- `/api/v1/nodes/*`
+- `/api/v1/edge-clients/*`
 - 用户模型、用户 Dao、用户 Repository
 - 节点中控模型、节点 Dao、节点 Service
 - JWT、密码哈希、雪花 ID
