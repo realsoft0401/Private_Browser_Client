@@ -65,21 +65,11 @@ func detectProjectRoot() (string, error) {
 // hasSettingsConfig 判断目录是否是当前边缘服务项目根目录。
 //
 // 设计来源：
-// - 早期只查 `config-dev.yaml`，容易让后续维护误以为 Client 存在开发/测试/生产运行模式；
-// - 用户已经确认 Edge Client 后期全部按生产口径运行，dev/test/prod/docker 只保留为“配置文件选择”；
-// - 因此这里识别 Settings 目录和任一受支持配置文件，避免项目启动逻辑继续绑定 dev 文件名。
+// - 早期支持过 config-dev/test/prod/docker 多文件选择，导致 `go run .` 默认找 config-prod.yaml；
+// - 用户已经确认 Edge Client 后期只保留 `config-docker.yaml`，所有运行都按生产口径；
+// - 因此这里只识别唯一配置文件，避免项目启动逻辑再退回多环境模式。
 func hasSettingsConfig(root string) bool {
-	configNames := []string{
-		"config-prod.yaml",
-		"config-docker.yaml",
-		"config-dev.yaml",
-		"config-test.yaml",
-	}
-	for _, name := range configNames {
-		configPath := filepath.Join(root, "Settings", name)
-		if stat, statErr := os.Stat(configPath); statErr == nil && !stat.IsDir() {
-			return true
-		}
-	}
-	return false
+	configPath := filepath.Join(root, "Settings", "config-docker.yaml")
+	stat, statErr := os.Stat(configPath)
+	return statErr == nil && !stat.IsDir()
 }

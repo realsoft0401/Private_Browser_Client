@@ -252,7 +252,3 @@ func relativeProjectPath(absPath string) string {
 	}
 	return filepath.ToSlash(rel)
 }
-
-func containerNameForProfile(profile model.ProfileFile) string {
-	return "bv-" + strings.ReplaceAll(profile.EnvID, "_", "-")
-}

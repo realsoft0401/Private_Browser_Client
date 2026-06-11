@@ -102,7 +102,7 @@ func (s *Service) GetDockerImages() ([]edgeModel.DockerImage, error) {
 // 维护边界：
 // - 这个接口不再作为通用 Docker 容器浏览器；
 // - 浏览器容器优先通过 `bv.project/bv.role/bv.envId` 识别，兼容早期只有 `bv.envId` 的测试容器；
-// - 边缘服务容器优先通过 `private-browser-client` 名称、镜像或 label 识别。
+// - 边缘服务容器优先通过 `private-browser-edge-server` 名称、镜像或 label 识别。
 func (s *Service) GetDockerContainers() ([]edgeModel.DockerContainer, error) {
 	dockerAPIURL := normalizeDockerAPIURL(Settings.Conf.DockerConfig.APIURL)
 	if dockerAPIURL == "" {
@@ -543,7 +543,8 @@ func applyProjectContainerMetadata(container *edgeModel.DockerContainer) bool {
 // isBrowserEnvContainer 识别由本项目创建的浏览器环境容器。
 //
 // 新容器使用 `bv.project=private-browser-client` + `bv.role=browser-env`；
-// 为了让历史旧容器不丢失，也兼容 `bv.envId` 和 `bv-` 名称前缀。
+// 当前正式容器名已经切到 `private-browser-edge-<envId>`，这里只继续兼容 `bv.envId`
+// 和旧 `bv-` 前缀，避免升级窗口里历史测试容器从状态同步列表中消失。
 func isBrowserEnvContainer(container *edgeModel.DockerContainer) bool {
 	labels := container.Labels
 	if labels["bv.project"] == "private-browser-client" && labels["bv.role"] == "browser-env" {
@@ -553,7 +554,8 @@ func isBrowserEnvContainer(container *edgeModel.DockerContainer) bool {
 		return true
 	}
 	for _, name := range container.Names {
-		if strings.HasPrefix(strings.TrimPrefix(strings.TrimSpace(name), "/"), "bv-") {
+		normalized := strings.TrimPrefix(strings.TrimSpace(name), "/")
+		if strings.HasPrefix(normalized, "private-browser-edge-") || strings.HasPrefix(normalized, "bv-") {
 			return true
 		}
 	}
@@ -565,6 +567,8 @@ func isBrowserEnvContainer(container *edgeModel.DockerContainer) bool {
 // 本地 `go run` 时服务不在 Docker 里，所以列表可能只出现 browser-env；
 // Docker 部署时推荐给容器加 `bv.project=private-browser-client,bv.role=edge-service`，
 // 同时这里也按容器名和镜像名兜底识别，方便 docker run/compose 不同部署方式。
+// 2026-06-11 起默认运行名切到 `private-browser-edge-server`；这里保留旧名识别，
+// 是为了避免升级期间因为脚本还没全量替换导致 Edge 自身容器识别失败。
 func isEdgeServiceContainer(container *edgeModel.DockerContainer) bool {
 	labels := container.Labels
 	if labels["bv.project"] == "private-browser-client" && labels["bv.role"] == "edge-service" {
@@ -572,12 +576,15 @@ func isEdgeServiceContainer(container *edgeModel.DockerContainer) bool {
 	}
 	for _, name := range container.Names {
 		normalized := strings.TrimPrefix(strings.TrimSpace(name), "/")
-		if normalized == "private-browser-client" || strings.HasPrefix(normalized, "private-browser-client-") {
+		if normalized == "private-browser-edge-server" ||
+			strings.HasPrefix(normalized, "private-browser-edge-server-") ||
+			normalized == "private-browser-client" ||
+			strings.HasPrefix(normalized, "private-browser-client-") {
 			return true
 		}
 	}
 	image := strings.ToLower(strings.TrimSpace(container.Image))
-	return strings.Contains(image, "private-browser-client")
+	return strings.Contains(image, "private-browser-client") || strings.Contains(image, "private_browser_edge_server")
 }
 
 // normalizeStringSlice 把 Docker 可能返回的 nil 切片统一成空数组。

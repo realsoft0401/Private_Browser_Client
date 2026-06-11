@@ -308,7 +308,7 @@ func prepareRestoredPackage(stagingEnvPath string, index *model.BrowserEnvIndex,
 	}
 
 	now := time.Now().Unix()
-	containerName := "bv-" + strings.ReplaceAll(index.EnvID, "_", "-")
+	containerName := edgeBrowserContainerName(index.EnvID)
 	if index.ContainerName != nil && strings.TrimSpace(*index.ContainerName) != "" {
 		containerName = strings.TrimSpace(*index.ContainerName)
 	}

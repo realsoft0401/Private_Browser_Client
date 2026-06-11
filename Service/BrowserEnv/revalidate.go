@@ -72,7 +72,7 @@ func (s *Service) RevalidateBrowserEnv(envID string) (*model.RevalidateBrowserEn
 		container = model.ContainerFile{EnvID: atomic.Profile.EnvID, Image: atomic.Profile.Runtime.Image}
 	}
 	if strings.TrimSpace(container.ContainerName) == "" {
-		container.ContainerName = "bv-" + strings.ReplaceAll(atomic.Profile.EnvID, "_", "-")
+		container.ContainerName = edgeBrowserContainerName(atomic.Profile.EnvID)
 	}
 
 	edge := edgeService.NewEdgeService()

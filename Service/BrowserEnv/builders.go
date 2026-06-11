@@ -3,7 +3,6 @@ package BrowserEnv
 import (
 	"encoding/json"
 	"strconv"
-	"strings"
 
 	model "private_browser_client/Models/BrowserEnv"
 	"private_browser_client/Settings"
@@ -138,7 +137,7 @@ func buildBindingFile(ctx *createContext) model.BindingFile {
 }
 
 func buildContainerFile(ctx *createContext) model.ContainerFile {
-	containerName := "bv-" + strings.ReplaceAll(ctx.EnvID, "_", "-")
+	containerName := edgeBrowserContainerName(ctx.EnvID)
 	return model.ContainerFile{
 		EnvID:         ctx.EnvID,
 		ContainerName: containerName,

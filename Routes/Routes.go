@@ -63,7 +63,12 @@ func Setup() *gin.Engine {
 	edge.POST("/browser-envs/:envId/revalidate", BrowserEnvService.RevalidateBrowserEnv)
 	edge.POST("/browser-envs/:envId/backup", BrowserEnvService.BackupBrowserEnv)
 	edge.POST("/browser-envs/:envId/restore", BrowserEnvService.RestoreBrowserEnv)
-	edge.DELETE("/browser-envs/:envId", BrowserEnvService.DeleteBrowserEnv)
+	// DELETE 拆分说明：
+	// - /package 销毁整个环境包（容器 + 运行目录 + browser-data/profile + SQLite 索引）；
+	// - /del 只删除环境包关联的本机 Docker 镜像，不碰环境包文件和索引。
+	// 拆分原因：用户要求镜像删除与环境包销毁分成两个独立权限端点，且重新开发阶段不保留旧根 DELETE 或冗余别名。
+	edge.DELETE("/browser-envs/:envId/package", BrowserEnvService.DeleteBrowserEnv)
+	edge.DELETE("/browser-envs/:envId/del", BrowserEnvService.DeleteBrowserEnvImage)
 	edge.PATCH("/browser-envs/:envId/proxy", BrowserEnvService.UpdateBrowserEnvProxy)
 	edge.PATCH("/browser-envs/:envId/proxy-mode", BrowserEnvService.UpdateBrowserEnvProxyMode)
 	edge.GET("/browser-envs/:envId/cdp-test", BrowserEnvService.TestBrowserEnvCDP)

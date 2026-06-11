@@ -180,6 +180,21 @@ func DeleteBrowserEnv(c *gin.Context) {
 	HttpResponse.ResponseSuccess(c, TaskService.NewStartResponse(task, publicRequestBase(c)))
 }
 
+// DeleteBrowserEnvImage 删除环境包关联的 Docker 镜像。
+//
+// 设计来源：
+// - 用户要求镜像删除与环境包销毁拆成独立端点，/del 只删镜像，不碰环境包目录和索引；
+// - 镜像删除只影响本机 Docker，是轻量动作，同步返回结果即可；
+// - 如果环境包正在运行，直接拒绝，避免删除正在被容器使用的镜像。
+func DeleteBrowserEnvImage(c *gin.Context) {
+	result, err := NewService().DeleteBrowserEnvImage(c.Param("envId"))
+	if err != nil {
+		writeBrowserEnvError(c, err)
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
 // GetBrowserEnvDetail 返回单个环境包详情。
 //
 // 详情接口读取 SQLite 索引和环境包文件，但不返回代理明文和指纹 raw；

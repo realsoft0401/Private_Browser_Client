@@ -2,7 +2,6 @@ package Settings
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -11,9 +10,17 @@ import (
 )
 
 var (
-	// BuildEnv 用于在编译阶段注入默认环境，例如：
-	// go build -ldflags "-X private_browser_client/Settings.BuildEnv=prod"
+	// BuildEnv 是旧版多环境构建参数的兼容占位。
+	//
+	// 当前 Client 已收紧为只读取 `Settings/config-docker.yaml`，不再根据 BuildEnv/ENV 选择配置文件。
+	// 变量保留是为了不破坏旧 Dockerfile 里的 ldflags；后续清理构建脚本时可以一起移除。
 	BuildEnv = ""
+
+	// ConfigFileName 是 Edge Client 唯一允许读取的配置文件名。
+	//
+	// 设计来源：用户确认 Settings 目录只保留 config-docker.yaml，Mac 本地、Linux 节点、Docker 容器
+	// 都使用同一套生产口径配置；差异通过挂载覆盖这个文件表达，不再引入 dev/test/prod 三套配置。
+	ConfigFileName = "config-docker.yaml"
 
 	// Conf 持有当前服务进程的全局配置。
 	Conf = new(AppConfig)
@@ -100,18 +107,17 @@ type DiscoveryConfig struct {
 //
 // 这个配置入口的来历：
 // - 早期为了本地开发区分过 dev/test/prod 配置文件；
-// - 用户在 2026-06-09 明确收紧：Edge Client 后期没有开发/测试/生产运行模式，实际都按生产口径运行；
-// - 因此 ENV/BuildEnv 现在只选择配置文件，不再代表业务行为模式，Conf.Mode 会统一归一为 production。
+// - 用户在 2026-06-10 明确收紧：Settings 目录只保留 config-docker.yaml，go run 和 Docker 都必须读它；
+// - 因此这里不再读取 ENV/BuildEnv，也不再拼 config-prod.yaml/config-dev.yaml/config-test.yaml。
 func Init(projectRoot string) error {
-	env := resolveEnv()
-	configFile := filepath.Join(projectRoot, "Settings", fmt.Sprintf("config-%s.yaml", env))
+	configFile := filepath.Join(projectRoot, "Settings", ConfigFileName)
 
 	configEngine = viper.New()
 	configEngine.SetConfigFile(configFile)
 	configEngine.SetConfigType("yaml")
 	configEngine.SetDefault("name", "private-browser-client")
 	configEngine.SetDefault("mode", "production")
-	configEngine.SetDefault("version", "0.1.8")
+	configEngine.SetDefault("version", "0.1.9")
 	configEngine.SetDefault("server.host", "0.0.0.0")
 	configEngine.SetDefault("server.port", 3300)
 	configEngine.SetDefault("server.read_timeout_seconds", 15)
@@ -138,7 +144,7 @@ func Init(projectRoot string) error {
 
 	Conf.ProjectRoot = projectRoot
 	Conf.ConfigFile = configFile
-	Conf.Env = env
+	Conf.Env = "docker"
 	normalizeRuntimeMode(Conf)
 	if Conf.ServerConfig == nil {
 		Conf.ServerConfig = &ServerConfig{}
@@ -166,7 +172,7 @@ func Init(projectRoot string) error {
 		}
 		updated.ProjectRoot = projectRoot
 		updated.ConfigFile = configFile
-		updated.Env = env
+		updated.Env = "docker"
 		normalizeRuntimeMode(updated)
 		if updated.ServerConfig == nil {
 			updated.ServerConfig = &ServerConfig{}
@@ -260,20 +266,4 @@ func normalizeDiscoveryConfig(config *DiscoveryConfig) {
 	if strings.TrimSpace(config.Group) == "" {
 		config.Group = "default"
 	}
-}
-
-// resolveEnv 统一决定当前读取哪份配置文件。
-//
-// 注意：这里的 env 只用于选择 `Settings/config-{env}.yaml`，不再代表业务运行模式；
-// Client 后期一律按 production 口径运行。默认读取 prod，是为了避免本地/容器/远端部署因为未设置 ENV
-// 而落到 dev 配置和 dev 数据库。
-func resolveEnv() string {
-	env := strings.TrimSpace(os.Getenv("ENV"))
-	if env == "" {
-		env = strings.TrimSpace(BuildEnv)
-	}
-	if env == "" {
-		env = "prod"
-	}
-	return strings.ToLower(env)
 }

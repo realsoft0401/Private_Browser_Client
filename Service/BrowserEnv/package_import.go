@@ -166,7 +166,7 @@ func prepareImportedPackage(stagingEnvPath string) (*preparedImportedPackage, er
 	profile.LastRuntime = model.PackageLastRuntime{}
 	profile.Package = model.ProfilePackageMetadata{}
 	profile.Metadata.UpdatedAt = now
-	container.ContainerName = "bv-" + strings.ReplaceAll(profile.EnvID, "_", "-")
+	container.ContainerName = edgeBrowserContainerName(profile.EnvID)
 	container.ContainerID = nil
 	container.Status = model.BrowserEnvStatusCreated
 	container.Ports = ports

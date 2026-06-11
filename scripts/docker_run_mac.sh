@@ -13,7 +13,7 @@ set -euo pipefail
 #   DATA_DIR=/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/data scripts/docker_run_mac.sh
 
 IMAGE="${IMAGE:-private-browser-client:local}"
-CONTAINER_NAME="${CONTAINER_NAME:-private-browser-client}"
+CONTAINER_NAME="${CONTAINER_NAME:-private-browser-edge-server}"
 HOST_PORT="${HOST_PORT:-3300}"
 DATA_DIR="${DATA_DIR:-$(pwd)/data}"
 
