@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Private Browser Client API</title>
+    <title>Private Browser Client Edge Node API</title>
     <link
       rel="stylesheet"
       href="/vendor/swagger-ui/swagger-ui.css"
@@ -22,9 +22,17 @@
     <div id="swagger-ui"></div>
     <script src="/vendor/swagger-ui/swagger-ui-bundle.js"></script>
     <script>
+      // Swagger UI 在本地调试和热更新时容易复用浏览器缓存里的旧 openapi.yaml。
+      // 这里按页面加载时间追加一次 cache-buster，保证用户刷新 Swagger 就能看到最新文档。
+      function openapiSpecURL() {
+        var specURL = new URL("/openapi.yaml", window.location.origin);
+        specURL.searchParams.set("t", String(Date.now()));
+        return specURL.toString();
+      }
+
       function bootSwagger() {
         window.ui = SwaggerUIBundle({
-          url: "/openapi.yaml",
+          url: openapiSpecURL(),
           dom_id: "#swagger-ui",
           deepLinking: true,
           presets: [SwaggerUIBundle.presets.apis],

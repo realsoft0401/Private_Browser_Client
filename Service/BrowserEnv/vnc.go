@@ -34,7 +34,8 @@ var vncUpgrader = websocket.Upgrader{
 // 职责边界：
 // - 只返回连接信息，不启动容器；
 // - 只从 SQLite 索引读取 vncPort，不允许前端传目标端口；
-// - 后续加鉴权时应在 HTTP 层或中心服务端做会话校验，不要把裸 VNC 端口暴露给公网。
+// - 后续加鉴权时应在 HTTP 层或中心服务端做会话校验，不要把裸 VNC 端口暴露给公网；
+// - `vncUrl`、`wsUrl`、`webVncUrl` 都应尽量站在调用方视角返回可访问地址，避免继续写死 127.0.0.1。
 func (s *Service) GetBrowserEnvVNCInfo(envID string, httpBase string, wsBase string) (*model.BrowserEnvVNCInfoResponse, error) {
 	index, err := getRuntimeIndex(envID)
 	if err != nil {
@@ -53,7 +54,7 @@ func (s *Service) GetBrowserEnvVNCInfo(envID string, httpBase string, wsBase str
 	return &model.BrowserEnvVNCInfoResponse{
 		EnvID:     envID,
 		VNCPort:   index.VNCPort,
-		VNCURL:    fmt.Sprintf("vnc://127.0.0.1:%d", index.VNCPort),
+		VNCURL:    publishedVNCURLForClient(httpBase, index.VNCPort),
 		WSURL:     strings.TrimRight(wsBase, "/") + "/api/v1/edge/browser-envs/" + envID + "/vnc/ws",
 		WebVNCURL: strings.TrimRight(httpBase, "/") + "/web-vnc.html?envId=" + envID,
 	}, nil

@@ -151,7 +151,7 @@ func (s *Service) ListBrowserEnvs(query model.ListBrowserEnvQuery, httpBase stri
 // 设计来源：
 // - 用户要求 `/api/v1/edge/browser-envs?status=running` 直接返回 VNC 链接，前端列表不应再逐条调用 vnc-info；
 // - VNC 链接只对 running 状态有意义，非运行态不返回这些字段，避免 UI 误导用户点击不可用连接；
-// - 地址按当前请求 Host 生成，兼容本机访问和后续反向代理。
+// - `vncUrl` 不能继续固定写死 127.0.0.1，否则独立内网里从其它机器访问 Edge 时会拿到错误地址。
 //
 // 职责边界：
 // - 只补充连接地址，不探测 VNC 是否健康；
@@ -166,7 +166,7 @@ func attachRunningVNCLinks(items []*model.BrowserEnvIndex, httpBase string, wsBa
 		}
 		escapedEnvID := url.PathEscape(item.EnvID)
 		queryEnvID := url.QueryEscape(item.EnvID)
-		item.VNCURL = fmt.Sprintf("vnc://127.0.0.1:%d", item.VNCPort)
+		item.VNCURL = publishedVNCURLForClient(httpBase, item.VNCPort)
 		if wsBase != "" {
 			item.VNCWSURL = fmt.Sprintf("%s/api/v1/edge/browser-envs/%s/vnc/ws", wsBase, escapedEnvID)
 		}

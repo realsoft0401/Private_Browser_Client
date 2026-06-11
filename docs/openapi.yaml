@@ -1,13 +1,28 @@
 openapi: 3.0.3
 info:
-  title: Private Browser Client Edge API
-  version: 0.2.0
+  title: Private Browser Client Edge Node API
+  version: 0.1.9
   description: |
-    Private_Browser_Client 当前定位为边缘服务，只暴露本机设备与本机 Docker 能力。
-    用户、节点列表、设备归属、设备编号等中心控制能力应放到未来 Private_Browser_Server。
+    Private_Browser_Client 是单机边缘执行服务，只负责当前宿主机上的 Docker、浏览器运行镜像、
+    环境包目录、浏览器实例生命周期和本机状态同步。
+
+    它不是用户中心、节点管理中心或调度平台，不维护其它 Client 列表，也不保存中心 clientId、
+    节点归属、设备编号、中心任务或跨节点聚合事实。
+
+    用户、节点接入、节点验证、中心任务、环境包聚合、审计和平台级调度统一由
+    Private_Browser_Server 承担；本文件只描述单个 Edge 节点对外暴露的本机能力。
+
+    除 `/health` 外，当前业务接口统一返回 HTTP 200 + JSON `code/message/data` 包装。
+    调用方需要同时区分环境包主状态 `status`、Docker 事实 `containerStatus`、
+    后台同步摘要 `monitorStatus`，不要只看容器是否 running。
 servers:
-  - url: http://127.0.0.1:3300
-    description: 本地边缘服务
+  - url: /
+    description: 当前打开 Swagger 页面的 Edge 服务入口；Try it out 会跟随当前页面 Host。
+tags:
+  - name: System
+    description: 健康检查、文档入口和本机状态同步摘要。
+  - name: Edge
+    description: 当前节点本机设备、Docker、任务和浏览器环境能力；所有接口只作用于本机，不做中心调度。
 paths:
   /health:
     get:
@@ -25,7 +40,7 @@ paths:
                 status: healthy
                 service: private-browser-client
                 mode: production
-                version: 0.1.8
+                version: 0.1.9
                 configFile: /path/to/Settings/config-prod.yaml
                 dockerApi: http://127.0.0.1:2375
                 checkedAt: 1779956198
@@ -152,7 +167,7 @@ paths:
                 message: success
                 data:
                   - id: abc123
-                    names: ["/bv-318275706305908736-tk-318578131780767744"]
+                    names: ["/private-browser-edge-906090119-tk-323407300419129344"]
                     image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
                     imageId: sha256:example
                     command: "/start.sh"
@@ -165,14 +180,14 @@ paths:
                     labels:
                       bv.project: private-browser-client
                       bv.role: browser-env
-                      bv.envId: 318275706305908736_tk_318578131780767744
-                      bv.userId: "318275706305908736"
+                      bv.envId: 906090119_tk_318578131780767744
+                      bv.userId: "906090119"
                       bv.rpaType: tk
                     state: running
                     status: Up 10 minutes
                     projectRole: browser-env
-                    envId: 318275706305908736_tk_318578131780767744
-                    userId: "318275706305908736"
+                    envId: 906090119_tk_318578131780767744
+                    userId: "906090119"
                     rpaType: tk
   /api/v1/edge/docker/pull-image:
     post:
@@ -211,7 +226,7 @@ paths:
                   status: queued
                   resourceType: docker_image
                   resourceId: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
-                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  eventsUrl: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   message: Docker 镜像拉取任务已创建
   /api/v1/edge/docker/remove-image:
     post:
@@ -244,7 +259,7 @@ paths:
                   status: queued
                   resourceType: docker_image
                   resourceId: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
-                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  eventsUrl: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   message: Docker 镜像删除任务已创建
   /api/v1/edge/containers/{id}/start:
     post:
@@ -269,7 +284,7 @@ paths:
                   status: queued
                   resourceType: docker_container
                   resourceId: abc123
-                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  eventsUrl: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   message: Docker 容器启动任务已创建
   /api/v1/edge/containers/{id}/stop:
     post:
@@ -302,7 +317,7 @@ paths:
                   status: queued
                   resourceType: docker_container
                   resourceId: abc123
-                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  eventsUrl: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   message: Docker 容器停止任务已创建
   /api/v1/edge/containers/{id}/restart:
     post:
@@ -335,7 +350,7 @@ paths:
                   status: queued
                   resourceType: docker_container
                   resourceId: abc123
-                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  eventsUrl: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   message: Docker 容器重启任务已创建
   /api/v1/edge/tasks/{taskId}:
     get:
@@ -385,7 +400,7 @@ paths:
           description: 按用户 ID 筛选，必须是数字字符串。
           schema:
             type: string
-          example: "318275706305908736"
+          example: "906090119"
         - name: rpaType
           in: query
           required: false
@@ -438,19 +453,19 @@ paths:
                   byRpaType:
                     tk: 1
                   items:
-                    - envId: 318275706305908736_tk_918273645001
-                      userId: "318275706305908736"
+                    - envId: 906090119_tk_323407300419129344
+                      userId: "906090119"
                       rpaType: tk
                       name: tk-browser-001
                       envSequence: 1
                       cdpPort: 8101
                       vncPort: 9101
-                      vncUrl: vnc://127.0.0.1:9101
-                      vncWsUrl: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
-                      webVncUrl: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
-                      envPath: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+                      vncUrl: vnc://192.168.10.119:9101
+                      vncWsUrl: ws://192.168.10.119:3300/api/v1/edge/browser-envs/906090119_tk_323407300419129344/vnc/ws
+                      webVncUrl: http://192.168.10.119:3300/web-vnc.html?envId=906090119_tk_323407300419129344
+                      envPath: data/browser-envs/users/906090119/tk/906090119_tk_323407300419129344
                       status: running
-                      containerName: bv-318275706305908736-tk-918273645001
+                      containerName: private-browser-edge-906090119-tk-323407300419129344
                       containerStatus: running
                       monitorStatus: unknown
                       fingerprintRestored: false
@@ -468,7 +483,7 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateBrowserEnvRequest'
             example:
-              userId: "318275706305908736"
+              userId: "906090119"
               rpaType: tk
               name: tk-browser-001
               runtime:
@@ -502,14 +517,14 @@ paths:
                 code: 1000
                 message: success
                 data:
-                  envId: 318275706305908736_tk_918273645001
-                  userId: "318275706305908736"
+                  envId: 906090119_tk_323407300419129344
+                  userId: "906090119"
                   rpaType: tk
                   envSequence: 1
                   ports:
                     cdp: 8101
                     vnc: 9101
-                  envPath: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+                  envPath: data/browser-envs/users/906090119/tk/906090119_tk_323407300419129344
                   files:
                     profile: profile.json
                     binding: binding.json
@@ -549,14 +564,14 @@ paths:
                 code: 1000
                 message: success
                 data:
-                  envId: 318275706305908736_tk_918273645001
-                  userId: "318275706305908736"
+                  envId: 906090119_tk_323407300419129344
+                  userId: "906090119"
                   rpaType: tk
                   envSequence: 2
                   ports:
                     cdp: 8102
                     vnc: 9102
-                  envPath: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+                  envPath: data/browser-envs/users/906090119/tk/906090119_tk_323407300419129344
                   status: created
                   importedAt: 1779957193
         '409':
@@ -608,8 +623,8 @@ paths:
                 message: success
                 data:
                   index:
-                    envId: 318275706305908736_tk_918273645001
-                    userId: "318275706305908736"
+                    envId: 906090119_tk_323407300419129344
+                    userId: "906090119"
                     rpaType: tk
                     name: tk-browser-001
                     envSequence: 1
@@ -623,8 +638,8 @@ paths:
                     createdAt: 1779956193
                     updatedAt: 1779956193
                   profile:
-                    envId: 318275706305908736_tk_918273645001
-                    userId: "318275706305908736"
+                    envId: 906090119_tk_323407300419129344
+                    userId: "906090119"
                     rpaType: tk
                     envSequence: 1
                     name: tk-browser-001
@@ -635,7 +650,7 @@ paths:
                       cdp: 8101
                       vnc: 9101
                   binding:
-                    id: binding-318275706305908736-tk-918273645001
+                    id: binding-906090119-tk-918273645001
                     version: 1
                     locked: false
                     identityHash: sha256:xxx
@@ -668,9 +683,10 @@ paths:
                     fingerprintRuntimeConfig: fingerprint/runtime-config.json
                     browserData: browser-data/profile
                   vnc:
-                    vncUrl: vnc://127.0.0.1:9101
-                    vncWsUrl: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
-                    webVncUrl: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+                    vncUrl: vnc://192.168.10.119:9101
+                    vncWsUrl: ws://192.168.10.119:3300/api/v1/edge/browser-envs/906090119_tk_323407300419129344/vnc/ws
+                    webVncUrl: http://192.168.10.119:3300/web-vnc.html?envId=906090119_tk_323407300419129344
+  /api/v1/edge/browser-envs/{envId}/package:
     delete:
       summary: 彻底删除本地浏览器环境包（SSE 任务）
       description: SSE 任务化接口。立即返回 taskId/eventsUrl，后台物理删除环境包目录，包括 profile/binding/proxy/fingerprint/browser-data/profile，删除关联的已停止 Docker 容器，并移除 SQLite browser_envs 索引记录。该操作无法通过 rebuild-index 找回；不会删除浏览器镜像，也不会自动停止 running 容器。如果环境包仍在 running，任务会失败并在 SSE error 事件中返回原因。前端必须在调用前提示用户谨慎操作、删除后无法恢复。
@@ -692,9 +708,36 @@ paths:
                   taskType: browser_env_delete
                   status: queued
                   resourceType: browser_env
-                  resourceId: 318275706305908736_tk_918273645001
-                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  resourceId: 906090119_tk_323407300419129344
+                  eventsUrl: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   message: 浏览器环境删除任务已创建
+  /api/v1/edge/browser-envs/{envId}/del:
+    delete:
+      summary: 删除环境包关联的 Docker 镜像
+      description: 从环境包的 profile.json 读取 runtime.image 并调用本机 Docker 删除镜像。该接口只处理运行镜像，不会删除环境包目录、browser-data/profile、proxy/fingerprint、container.json 或 SQLite 索引。如果环境包正在 running 则拒绝；如果镜像仍被其他容器引用，Docker 会拒绝删除，响应中会包含 warningMessage 说明原因。该接口同步返回删除结果。
+      tags: [Edge]
+      parameters:
+        - $ref: '#/components/parameters/BrowserEnvId'
+      responses:
+        '200':
+          description: 镜像删除完成（可能成功也可能因镜像被占用而 warning）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteBrowserEnvImageSuccess'
+              example:
+                code: 1000
+                message: success
+                data:
+                  envId: 906090119_tk_323407300419129344
+                  image: crpi-xxx.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+                  imageRemoved: true
+                  results:
+                    - image: crpi-xxx.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+                      deleted: sha256:abc123
+                      untagged: crpi-xxx.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+                  warningMessage: ""
+                  deletedAt: 1781070000
   /api/v1/edge/browser-envs/{envId}/run:
     post:
       summary: 启动本地浏览器环境包（SSE 任务）
@@ -725,8 +768,8 @@ paths:
                   taskType: browser_env_run
                   status: queued
                   resourceType: browser_env
-                  resourceId: 318275706305908736_tk_918273645001
-                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  resourceId: 906090119_tk_323407300419129344
+                  eventsUrl: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   message: 浏览器环境启动任务已创建
   /api/v1/edge/browser-envs/{envId}/stop:
     post:
@@ -758,8 +801,8 @@ paths:
                   taskType: browser_env_stop
                   status: queued
                   resourceType: browser_env
-                  resourceId: 318275706305908736_tk_918273645001
-                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  resourceId: 906090119_tk_323407300419129344
+                  eventsUrl: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   message: 浏览器环境停止任务已创建
   /api/v1/edge/browser-envs/{envId}/revalidate:
     post:
@@ -783,8 +826,8 @@ paths:
                   taskType: browser_env_revalidate
                   status: queued
                   resourceType: browser_env
-                  resourceId: 318275706305908736_tk_918273645001
-                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  resourceId: 906090119_tk_323407300419129344
+                  eventsUrl: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   message: 浏览器环境重新校验任务已创建
         '409':
           description: 环境包不是 error、原子材料不完整、Docker 容器仍在 running/restarting/paused，或存在容器身份冲突。
@@ -849,7 +892,7 @@ paths:
                 code: 1000
                 message: success
                 data:
-                  envId: 318275706305908736_tk_318578131780767744
+                  envId: 906090119_tk_318578131780767744
                   status: stopped
                   image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
                   proxy:
@@ -864,7 +907,7 @@ paths:
                   restartRequired: false
                   restartQueued: true
                   taskId: task_1770000000000000000_12345
-                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  eventsUrl: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   restarted: false
                   updatedAt: 1779956993
   /api/v1/edge/browser-envs/{envId}/proxy-mode:
@@ -893,7 +936,7 @@ paths:
                 code: 1000
                 message: success
                 data:
-                  envId: 318275706305908736_tk_318578131780767744
+                  envId: 906090119_tk_318578131780767744
                   status: running
                   image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
                   proxy:
@@ -908,7 +951,7 @@ paths:
                   restartRequired: false
                   restartQueued: true
                   taskId: task_1770000000000000000_12345
-                  eventsUrl: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+                  eventsUrl: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
                   restarted: false
                   updatedAt: 1779957993
   /api/v1/edge/browser-envs/{envId}/cdp-test:
@@ -929,7 +972,7 @@ paths:
                 code: 1000
                 message: success
                 data:
-                  envId: 318275706305908736_tk_918273645001
+                  envId: 906090119_tk_323407300419129344
                   cdpPort: 8101
                   endpoint: http://host.docker.internal:8101/
                   ok: true
@@ -943,7 +986,7 @@ paths:
   /api/v1/edge/browser-envs/{envId}/vnc-info:
     get:
       summary: 获取浏览器版 VNC 连接信息
-      description: 仅在环境包 status=running 时返回 VNC 端口、vnc:// 地址、WebSocket 地址和浏览器 Web VNC 页面地址。推荐前端使用 webVncUrl；error/stopped/created 状态不会返回连接信息，避免把 Docker running 误判为业务可用。
+      description: 仅在环境包 status=running 时返回 VNC 端口、vnc:// 地址、WebSocket 地址和浏览器 Web VNC 页面地址。`wsUrl` 和 `webVncUrl` 会跟随当前请求 Host 生成；`vncUrl` 会优先复用当前请求主机名/IP，再拼接环境包对应的宿主 VNC 端口，因此通过 `192.168.10.119:3300` 访问 Edge 时会返回 `vnc://192.168.10.119:9101`。推荐前端使用 webVncUrl；error/stopped/created 状态不会返回连接信息，避免把 Docker running 误判为业务可用。
       tags: [Edge]
       parameters:
         - $ref: '#/components/parameters/BrowserEnvId'
@@ -958,11 +1001,11 @@ paths:
                 code: 1000
                 message: success
                 data:
-                  envId: 318275706305908736_tk_918273645001
+                  envId: 906090119_tk_323407300419129344
                   vncPort: 9101
-                  vncUrl: vnc://127.0.0.1:9101
-                  wsUrl: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
-                  webVncUrl: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+                  vncUrl: vnc://192.168.10.119:9101
+                  wsUrl: ws://192.168.10.119:3300/api/v1/edge/browser-envs/906090119_tk_323407300419129344/vnc/ws
+                  webVncUrl: http://192.168.10.119:3300/web-vnc.html?envId=906090119_tk_323407300419129344
   /api/v1/edge/browser-envs/{envId}/vnc/ws:
     get:
       summary: noVNC WebSocket 代理
@@ -992,7 +1035,7 @@ components:
       description: 浏览器环境包 ID。
       schema:
         type: string
-      example: 318275706305908736_tk_918273645001
+      example: 906090119_tk_323407300419129344
   schemas:
     HealthResponse:
       type: object
@@ -1255,11 +1298,11 @@ components:
         envId:
           type: string
           description: 浏览器环境容器对应的 envId；edge-service 为空。
-          example: 318275706305908736_tk_318578131780767744
+          example: 906090119_tk_318578131780767744
         userId:
           type: string
           description: 浏览器环境容器所属用户；edge-service 为空。
-          example: "318275706305908736"
+          example: "906090119"
         rpaType:
           type: string
           description: 浏览器环境容器的 RPA 类型；edge-service 为空。
@@ -1342,7 +1385,7 @@ components:
         userId:
           type: string
           description: 用户 ID，必须是数字字符串。
-          example: "318275706305908736"
+          example: "906090119"
         rpaType:
           type: string
           enum: [tk, fb, ins, yt, x, other]
@@ -1438,10 +1481,10 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         userId:
           type: string
-          example: "318275706305908736"
+          example: "906090119"
         rpaType:
           type: string
           example: tk
@@ -1452,7 +1495,7 @@ components:
           $ref: '#/components/schemas/CreateBrowserEnvPorts'
         envPath:
           type: string
-          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+          example: data/browser-envs/users/906090119/tk/906090119_tk_323407300419129344
         files:
           type: object
           additionalProperties:
@@ -1485,13 +1528,13 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         containerId:
           type: string
           example: abc123
         containerName:
           type: string
-          example: bv-318275706305908736-tk-918273645001
+          example: private-browser-edge-906090119-tk-323407300419129344
         image:
           type: string
           example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-arm64
@@ -1505,7 +1548,7 @@ components:
           example: http://127.0.0.1:8101
         vncUrl:
           type: string
-          example: vnc://127.0.0.1:9101
+          example: vnc://192.168.10.119:9101
         dockerApiUrl:
           type: string
           example: http://127.0.0.1:2375
@@ -1533,7 +1576,7 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         cdpPort:
           type: integer
           example: 8101
@@ -1582,7 +1625,7 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         containerId:
           type: string
           nullable: true
@@ -1590,7 +1633,7 @@ components:
         containerName:
           type: string
           nullable: true
-          example: bv-318275706305908736-tk-918273645001
+          example: private-browser-edge-906090119-tk-323407300419129344
         status:
           type: string
           example: stopped
@@ -1613,7 +1656,7 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         status:
           type: string
           enum: [created, stopped]
@@ -1629,7 +1672,7 @@ components:
         containerName:
           type: string
           nullable: true
-          example: bv-318275706305908736-tk-918273645001
+          example: private-browser-edge-906090119-tk-323407300419129344
         envSequence:
           type: integer
           example: 101
@@ -1651,7 +1694,7 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         status:
           type: string
           enum: [deleted]
@@ -1670,16 +1713,46 @@ components:
         updatedAt:
           type: integer
           example: 1779957093
+    DeleteBrowserEnvImageSuccess:
+      type: object
+      description: 环境包关联 Docker 镜像的删除结果。该接口只删除镜像，不碰环境包目录和索引。
+      properties:
+        envId:
+          type: string
+          example: 906090119_tk_323407300419129344
+        image:
+          type: string
+          example: crpi-xxx.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+        imageRemoved:
+          type: boolean
+          example: true
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              image:
+                type: string
+              deleted:
+                type: string
+              untagged:
+                type: string
+        warningMessage:
+          type: string
+          example: ""
+        deletedAt:
+          type: integer
+          example: 1781070000
     ImportBrowserEnvPackageResponse:
       type: object
       description: 环境包导入结果。导入保留原 envId，但重新分配本机 envSequence 与 CDP/VNC 端口，并把容器运行态重置为 created。
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         userId:
           type: string
-          example: "318275706305908736"
+          example: "906090119"
         rpaType:
           type: string
           example: tk
@@ -1690,7 +1763,7 @@ components:
           $ref: '#/components/schemas/CreateBrowserEnvPorts'
         envPath:
           type: string
-          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+          example: data/browser-envs/users/906090119/tk/906090119_tk_323407300419129344
         status:
           type: string
           enum: [created]
@@ -1704,10 +1777,10 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         userId:
           type: string
-          example: "318275706305908736"
+          example: "906090119"
         rpaType:
           type: string
           example: tk
@@ -1717,7 +1790,7 @@ components:
           example: backed_up
         backupPath:
           type: string
-          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001-backup.tar.gz
+          example: data/browser-envs/users/906090119/tk/906090119_tk_323407300419129344-backup.tar.gz
         backupChecksum:
           type: string
           example: sha256:abcdef123456
@@ -1736,10 +1809,10 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         userId:
           type: string
-          example: "318275706305908736"
+          example: "906090119"
         rpaType:
           type: string
           example: tk
@@ -1751,7 +1824,7 @@ components:
           $ref: '#/components/schemas/CreateBrowserEnvPorts'
         envPath:
           type: string
-          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+          example: data/browser-envs/users/906090119/tk/906090119_tk_323407300419129344
         restoredAt:
           type: integer
           example: 1779957393
@@ -1764,10 +1837,10 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         userId:
           type: string
-          example: "318275706305908736"
+          example: "906090119"
         rpaType:
           type: string
           example: tk
@@ -1776,7 +1849,7 @@ components:
           example: tk-browser-001
         envPath:
           type: string
-          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+          example: data/browser-envs/users/906090119/tk/906090119_tk_323407300419129344
         status:
           type: string
           enum: [created_atomic, verified_atomic, invalid]
@@ -1805,16 +1878,16 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         userId:
           type: string
-          example: "318275706305908736"
+          example: "906090119"
         rpaType:
           type: string
           example: tk
         envPath:
           type: string
-          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+          example: data/browser-envs/users/906090119/tk/906090119_tk_323407300419129344
         status:
           type: string
           enum: [created]
@@ -1843,7 +1916,7 @@ components:
           example: browser_env
         resourceId:
           type: string
-          example: 318275706305908736_tk_318578131780767744
+          example: 906090119_tk_318578131780767744
         message:
           type: string
           example: 浏览器容器重建仍在执行
@@ -1908,10 +1981,10 @@ components:
           example: browser_env
         resourceId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         eventsUrl:
           type: string
-          example: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+          example: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
         message:
           type: string
           example: 浏览器环境启动任务已创建
@@ -1949,7 +2022,7 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_318578131780767744
+          example: 906090119_tk_318578131780767744
         status:
           type: string
           example: stopped
@@ -1982,7 +2055,7 @@ components:
         eventsUrl:
           type: string
           description: 任务 SSE 事件流地址，前端可用 EventSource 或 curl -N 订阅。
-          example: http://127.0.0.1:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
+          example: http://192.168.10.119:3300/api/v1/edge/tasks/task_1770000000000000000_12345/events
         restarted:
           type: boolean
           description: 是否已由边缘服务在当前 HTTP 请求内同步完成容器重建；PATCH proxy 运行态通常返回 restartQueued=true、restarted=false。
@@ -1997,19 +2070,19 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         vncPort:
           type: integer
           example: 9101
         vncUrl:
           type: string
-          example: vnc://127.0.0.1:9101
+          example: vnc://192.168.10.119:9101
         wsUrl:
           type: string
-          example: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
+          example: ws://192.168.10.119:3300/api/v1/edge/browser-envs/906090119_tk_323407300419129344/vnc/ws
         webVncUrl:
           type: string
-          example: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+          example: http://192.168.10.119:3300/web-vnc.html?envId=906090119_tk_323407300419129344
     BrowserEnvDetailResponse:
       type: object
       description: 环境包详情。代理配置正文和 fingerprint raw 不会在该响应中返回。
@@ -2098,13 +2171,13 @@ components:
       properties:
         vncUrl:
           type: string
-          example: vnc://127.0.0.1:9101
+          example: vnc://192.168.10.119:9101
         vncWsUrl:
           type: string
-          example: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
+          example: ws://192.168.10.119:3300/api/v1/edge/browser-envs/906090119_tk_323407300419129344/vnc/ws
         webVncUrl:
           type: string
-          example: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+          example: http://192.168.10.119:3300/web-vnc.html?envId=906090119_tk_323407300419129344
     ListBrowserEnvResponse:
       type: object
       properties:
@@ -2138,10 +2211,10 @@ components:
       properties:
         envId:
           type: string
-          example: 318275706305908736_tk_918273645001
+          example: 906090119_tk_323407300419129344
         userId:
           type: string
-          example: "318275706305908736"
+          example: "906090119"
         rpaType:
           type: string
           example: tk
@@ -2160,18 +2233,18 @@ components:
         vncUrl:
           type: string
           description: 仅 status=running 时返回的原生 VNC 地址。
-          example: vnc://127.0.0.1:9101
+          example: vnc://192.168.10.119:9101
         vncWsUrl:
           type: string
           description: 仅 status=running 时返回的 noVNC WebSocket 代理地址。
-          example: ws://127.0.0.1:3300/api/v1/edge/browser-envs/318275706305908736_tk_918273645001/vnc/ws
+          example: ws://192.168.10.119:3300/api/v1/edge/browser-envs/906090119_tk_323407300419129344/vnc/ws
         webVncUrl:
           type: string
           description: 仅 status=running 时返回的浏览器 VNC 页面地址。
-          example: http://127.0.0.1:3300/web-vnc.html?envId=318275706305908736_tk_918273645001
+          example: http://192.168.10.119:3300/web-vnc.html?envId=906090119_tk_323407300419129344
         envPath:
           type: string
-          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001
+          example: data/browser-envs/users/906090119/tk/906090119_tk_323407300419129344
         status:
           type: string
           enum: [created, running, stopped, backed_up, deleted, archived, error]
@@ -2183,7 +2256,7 @@ components:
         containerName:
           type: string
           nullable: true
-          example: bv-318275706305908736-tk-918273645001
+          example: private-browser-edge-906090119-tk-323407300419129344
         containerStatus:
           type: string
           example: unknown
@@ -2197,7 +2270,7 @@ components:
         backupPath:
           type: string
           nullable: true
-          example: data/browser-envs/users/318275706305908736/tk/318275706305908736_tk_918273645001-backup.tar.gz
+          example: data/browser-envs/users/906090119/tk/906090119_tk_323407300419129344-backup.tar.gz
         backupChecksum:
           type: string
           nullable: true

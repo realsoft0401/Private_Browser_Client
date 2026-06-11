@@ -40,6 +40,25 @@ func publishedPortAddressForService(port int) string {
 	return net.JoinHostPort(publishedPortHostForService(), strconv.Itoa(port))
 }
 
+// publishedVNCURLForClient 返回应该暴露给调用方的原生 VNC 地址。
+//
+// 设计来源：
+// - 用户在 Swagger 和联调里明确指出，`vncUrl` 固定返回 127.0.0.1 会误导其它机器上的管理端；
+// - `/vnc-info`、列表和详情接口里的 `wsUrl/webVncUrl` 已经按当前请求 Host 生成，原生 VNC 地址也要保持同一节点视角；
+// - VNC 仍然连接 Docker 宿主机 published port，所以这里只替换 host，不改端口分配逻辑。
+//
+// 职责边界：
+// - 优先复用当前 HTTP 请求里的主机名/IP，保证通过 192.168.x.x 访问 Edge 时不会再看到 127.0.0.1；
+// - 如果当前请求没有可信 Host，再回退到 docker.api_url 推导出的宿主机地址；
+// - 这里只生成给调用方展示/连接的地址，不负责判断该地址是否已经被公网网关暴露。
+func publishedVNCURLForClient(httpBase string, port int) string {
+	host := extractHostFromURL(httpBase)
+	if host == "" {
+		host = publishedPortHostForService()
+	}
+	return "vnc://" + net.JoinHostPort(host, strconv.Itoa(port))
+}
+
 // publishedHTTPURLForService 生成当前服务访问发布端口的 HTTP URL。
 //
 // CDP 端口通过 Docker PortBinding 暴露为 HTTP 服务；服务容器内必须访问 Docker API
