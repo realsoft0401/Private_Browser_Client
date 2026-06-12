@@ -3,6 +3,8 @@
 ## 构建与镜像约束
 
 - `docker build` / `docker buildx build` 默认使用清华镜像源。
+- 不能只把容器内 `apt` / `go mod` 切到国内源；Dockerfile 最前面的 `FROM` 基础镜像入口也必须走国内可访问镜像前缀。
+- 当前 `Private_Browser_Client/Dockerfile` 默认通过 `DOCKERHUB_MIRROR=docker.m.daocloud.io` 拉取 `golang` / `debian` 基础镜像；除非明确说明在海外 CI 或可直连 Docker Hub 的环境里构建，否则不要改回裸 `docker.io/library/...`。
 - Dockerfile 里的 Debian 包源默认使用 `mirrors.tuna.tsinghua.edu.cn`，除非明确说明要切回官方源或海外源。
 - Go 依赖下载和镜像内 `go mod download` / `go build` 必须配置可用 `GOPROXY`，当前默认使用清华 Go 代理：
   - `https://mirrors.tuna.tsinghua.edu.cn/git/goproxy/,direct`
@@ -11,6 +13,7 @@
 ## 设计原因
 
 - 当前项目的 Docker 构建经常依赖 Debian `apt` 和 Go module 下载，国内网络直连官方源容易超时或卡住。
+- 2026-06-12 已实测出现过“`Dockerfile` 里明明配了清华源，但 buildx 仍卡在 `load metadata for docker.io/library/golang`”的问题；根因是基础镜像元数据请求发生在容器内 `apt/go mod` 之前。
 - 统一使用清华源，是为了降低 `docker build`、`go mod download`、`go build` 在本地、测试机和发布前构建阶段的不确定性。
 - 这条规则属于构建稳定性要求，不是临时调试动作；后续维护时不要随手改回多套默认源混用。
 

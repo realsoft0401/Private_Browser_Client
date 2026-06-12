@@ -3,8 +3,16 @@
 # 设计来源：
 # - 当前项目使用 go-sqlite3，必须启用 CGO；
 # - 因此构建镜像需要 gcc，运行镜像保留在 Debian slim，避免 Alpine/musl 和 glibc 动态库不匹配；
-# - docs、Settings、public 作为运行时事实文件复制到最终镜像，保证 Swagger 入口和配置能随镜像一起部署。
-FROM golang:1.22-bookworm AS builder
+# - docs、Settings、public 作为运行时事实文件复制到最终镜像，保证 Swagger 入口和配置能随镜像一起部署；
+# - 2026-06-12 本地 buildx 实测发现，仅把 apt/go mod 切到清华源还不够，最前面的 FROM 仍会先访问
+#   Docker Hub 元数据；国内网络这里最容易卡住，所以把基础镜像入口也收敛成可覆盖的国内镜像前缀。
+#
+# 职责边界：
+# - DOCKERHUB_MIRROR 只负责 Docker 基础镜像入口；
+# - Debian apt 和 Go module 仍分别由 DEBIAN_MIRROR / GOPROXY 控制；
+# - 如果后续海外 CI 直连 Docker Hub 更快，可用 --build-arg DOCKERHUB_MIRROR=docker.io 覆盖。
+ARG DOCKERHUB_MIRROR=docker.m.daocloud.io
+FROM ${DOCKERHUB_MIRROR}/library/golang:1.22-bookworm AS builder
 
 WORKDIR /src
 
@@ -36,7 +44,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build \
   -o /out/private_browser_client .
 
 # 第二阶段只保留运行服务需要的文件。
-FROM debian:bookworm-slim AS runtime
+FROM ${DOCKERHUB_MIRROR}/library/debian:bookworm-slim AS runtime
 
 WORKDIR /app
 

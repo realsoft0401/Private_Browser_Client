@@ -141,7 +141,6 @@ func requireAtomicPackageMaterials(envPath string, profile model.ProfileFile) er
 		profile.Paths.FingerprintSnapshot,
 		profile.Paths.FingerprintBackup,
 		profile.Paths.FingerprintRuntimeConfig,
-		profile.Paths.ProxyConfig,
 		profile.Paths.ProxyRuntime,
 	}
 	for _, relativePath := range requiredFiles {
@@ -175,8 +174,33 @@ func requireAtomicPackageMaterials(envPath string, profile model.ProfileFile) er
 	if err := validatePackageJSONFile(envPath, profile.Paths.ProxyRuntime, &model.ProxyRuntimeFile{}); err != nil {
 		return err
 	}
+	if err := validateProxyMaterialsForAdmission(envPath, profile); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateProxyMaterialsForAdmission 统一处理环境包准入时的代理材料校验。
+//
+// 设计来源：
+//   - 用户已经确认“proxy.enabled=false”是新项目里的正式状态，不需要为了旧兼容强制保留 clash.yaml；
+//   - 之前准入层把 proxy/clash.yaml 当成所有环境包的必备原子材料，导致 backup/import/revalidate/rebuild-index
+//     在关闭代理时误报“环境包损坏”，这和详情接口、业务语义都不一致；
+//   - 因此现在收口为：proxyRuntime 和 proxy 目录始终必需，clash.yaml 只在代理启用时才是硬性材料。
+//
+// 职责边界：
+// - 这里只判断“当前生命周期动作是否还能信任这个环境包”；
+// - 不负责修复代理配置，也不因为代理关闭去推导默认 clash 配置；
+// - 如果代理关闭，即使磁盘上没有 clash.yaml，也允许后续 backup/import/revalidate 继续处理环境资产。
+func validateProxyMaterialsForAdmission(envPath string, profile model.ProfileFile) error {
 	if strings.TrimSpace(profile.Proxy.ConfigPath) != profile.Paths.ProxyConfig {
 		return invalidError("profile.proxy.configPath 与 profile.paths.proxyConfig 不一致")
+	}
+	if !profile.Proxy.Enabled {
+		return nil
+	}
+	if err := requirePackageFile(envPath, profile.Paths.ProxyConfig); err != nil {
+		return invalidError(err.Error())
 	}
 	if _, err := readProxyConfigForAdmission(envPath, profile.Paths.ProxyConfig); err != nil {
 		return err
