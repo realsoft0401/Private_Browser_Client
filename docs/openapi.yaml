@@ -42,7 +42,7 @@ paths:
                 mode: production
                 version: 0.1.9
                 configFile: /path/to/Settings/config-prod.yaml
-                dockerApi: http://127.0.0.1:2375
+                dockerApi: http://192.168.10.119:2375
                 checkedAt: 1779956198
                 checks:
                   api:
@@ -89,8 +89,8 @@ paths:
                 code: 1000
                 message: success
                 data:
-                  deviceIp: 127.0.0.1
-                  dockerApiUrl: http://127.0.0.1:2375
+                  deviceIp: 192.168.10.119
+                  dockerApiUrl: http://192.168.10.119:2375
                   deviceOs: Docker Desktop
                   deviceArch: arm64
                   deviceRawArch: arm64
@@ -120,7 +120,7 @@ paths:
                 code: 1000
                 message: success
                 data:
-                  dockerApiUrl: http://127.0.0.1:2375
+                  dockerApiUrl: http://192.168.10.119:2375
                   status: available
                   message: ok
                   imagesCount: 25
@@ -1061,7 +1061,8 @@ components:
           example: /path/to/Settings/config-prod.yaml
         dockerApi:
           type: string
-          example: http://127.0.0.1:2375
+          description: 文档示例统一展示为边缘节点内网地址；实际部署也可能配置为本机回环地址，例如 host 网络下的 http://127.0.0.1:2375。
+          example: http://192.168.10.119:2375
         checkedAt:
           type: integer
           example: 1779956198
@@ -1157,10 +1158,12 @@ components:
       properties:
         deviceIp:
           type: string
-          example: 127.0.0.1
+          description: 当前边缘节点对外可识别的宿主机地址示例，用于帮助中心端或联调方理解该节点位于哪台机器。
+          example: 192.168.10.119
         dockerApiUrl:
           type: string
-          example: http://127.0.0.1:2375
+          description: 文档示例统一展示为边缘节点内网地址；实际部署也可能配置为本机回环地址，例如 host 网络下的 http://127.0.0.1:2375。
+          example: http://192.168.10.119:2375
         deviceOs:
           type: string
           example: Docker Desktop
@@ -1206,7 +1209,8 @@ components:
       properties:
         dockerApiUrl:
           type: string
-          example: http://127.0.0.1:2375
+          description: 文档示例统一展示为边缘节点内网地址；实际部署也可能配置为本机回环地址，例如 host 网络下的 http://127.0.0.1:2375。
+          example: http://192.168.10.119:2375
         status:
           type: string
           example: available
@@ -1545,13 +1549,15 @@ components:
           $ref: '#/components/schemas/CreateBrowserEnvPorts'
         cdpUrl:
           type: string
-          example: http://127.0.0.1:8101
+          description: 运行中的浏览器环境对外暴露的 CDP 调试地址示例；返回值会跟随当前 Edge 节点宿主机地址，而不是固定写死 127.0.0.1。
+          example: http://192.168.10.119:8101
         vncUrl:
           type: string
           example: vnc://192.168.10.119:9101
         dockerApiUrl:
           type: string
-          example: http://127.0.0.1:2375
+          description: 文档示例统一展示为边缘节点内网地址；实际部署也可能配置为本机回环地址，例如 host 网络下的 http://127.0.0.1:2375。
+          example: http://192.168.10.119:2375
         deviceArch:
           type: string
           example: arm64
