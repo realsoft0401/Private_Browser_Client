@@ -1,0 +1,9 @@
+.DS_Store
+.tmp/
+.gocache/
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+private_browser_client
+dist/
+build/
