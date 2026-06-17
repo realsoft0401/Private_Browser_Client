@@ -1,1 +1,45 @@
-# 新 Client 的配置文件后续按新项目需要补齐。
+server:
+  host: 0.0.0.0
+  port: 3300
+
+docker:
+  api_url: http://127.0.0.1:2375
+
+discovery:
+  enabled: true
+  broadcast_address: 255.255.255.255
+  port: 43000
+  interval_seconds: 15
+  magic: PRIVATE_BROWSER_CLIENT_DISCOVERY
+  protocol_version: 1
+  group: default
+  advertise_host: ""
+  advertise_base_url: ""
+
+heartbeat:
+  enabled: true
+  server_base_url: http://127.0.0.1:3400
+  interval_seconds: 15
+
+node_register:
+  enabled: true
+  server_base_url: http://127.0.0.1:3400
+  main_account_id: "906090119"
+  node_name: ""
+  edge_api_key: private-browser-edge-key
+
+swagger:
+  enabled: true
+  path: /swagger
+
+slot_runtime:
+  enabled: true
+  image: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+  command: []
+  container_name_prefix: private-browser-slot
+  auto_pull_missing_image: true
+  enable_vnc: true
+  internal_cdp_port: 9222
+  internal_vnc_port: 5900
+  host_cdp_base_port: 9200
+  host_vnc_base_port: 9100

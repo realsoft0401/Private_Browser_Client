@@ -1,0 +1,1168 @@
+openapi: 3.0.3
+info:
+  title: Private Browser Client Edge Node API
+  version: 0.2.0
+  description: |
+    Private_Browser_Client 是单机边缘执行服务，只负责当前宿主机上的 Docker、本机 slot 资源位、
+    browser-env 正式生命周期能力和受控的 Node 登记协同。
+
+    它不是用户中心、节点管理中心或调度平台，不维护其它 Client 列表，也不自生成中心 clientId。
+    文档里出现的 `clientId` 统一表示 Node Server 分配的中心节点身份；Client 侧只允许在受控本机接口里
+    临时展示 Node 返回结果，并允许把上次结果写入本地 JSON 留痕；但这个 JSON 只是缓存，不是正式中心身份，
+    更不允许把它当作本机自造设备号。
+
+    除 `/health` 外，当前业务接口统一返回 HTTP 200 + JSON `code/message/data` 包装。
+servers:
+  - url: /
+    description: 当前打开 Swagger 页面的 Edge 服务入口；Try it out 会跟随当前页面 Host。
+paths:
+  /health:
+    get:
+      summary: Client health check
+      description: 返回当前 Client 的本机健康事实，只表达 healthy/unhealthy，不表达 Server 侧 offline/stale。
+      responses:
+        '200':
+          description: Health response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseHealth'
+  /api/v1/edge/device-info:
+    get:
+      summary: Get local device info
+      description: 返回当前 Client 所在机器的最小设备事实摘要。
+      responses:
+        '200':
+          description: Device info response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseDeviceInfo'
+  /api/v1/edge/node-registration:
+    get:
+      summary: Get node registration status
+      description: 返回当前 Client 对 Node 暴露的发现摘要，实时查询 Node 当前是否已存在这台 Client 的中心登记结果，并带回本地 JSON 缓存留痕。
+      responses:
+        '200':
+          description: Node registration status response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseNodeRegistrationStatus'
+  /api/v1/edge/node-registration/assign:
+    post:
+      summary: Accept assigned clientId from node server
+      description: |
+        接收 Node Server 已经完成 bind 后反向下发的中心 clientId/accountId，并写入本地
+        `data/node-registration.json` 留痕。调用方必须带 `X-Edge-API-Key`。
+      parameters:
+        - name: X-Edge-API-Key
+          in: header
+          required: true
+          schema:
+            type: string
+          example: private-browser-edge-key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignNodeRegistrationRequest'
+      responses:
+        '200':
+          description: Assign result response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseNodeRegistrationAssign'
+  /api/v1/edge/slots:
+    get:
+      summary: List slots
+      description: 列出当前 Client 已创建的全部 slot 当前态。
+      responses:
+        '200':
+          description: Slot list response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseSlotList'
+    post:
+      summary: Create slot
+      description: 按指定 slotId 在当前 Client 上创建一个 slot 当前态记录。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSlotRequest'
+      responses:
+        '201':
+          description: Slot created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseSlot'
+  /api/v1/edge/slots/{slotId}:
+    get:
+      summary: Get slot
+      description: 查询单个 slot 当前态。
+      parameters:
+        - $ref: '#/components/parameters/SlotID'
+      responses:
+        '200':
+          description: Slot response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseSlot'
+    delete:
+      summary: Destroy slot
+      description: 销毁指定 slot。当前骨架阶段仅允许 waiting 状态直接销毁。
+      parameters:
+        - $ref: '#/components/parameters/SlotID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestroySlotRequest'
+      responses:
+        '200':
+          description: Destroy slot response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseGeneric'
+  /api/v1/edge/slots/{slotId}/reinit:
+    post:
+      summary: Reinitialize slot
+      description: 把 slot 收回 waiting 初始态。当前要求 slot 必须已经脱离运行关系。
+      parameters:
+        - $ref: '#/components/parameters/SlotID'
+      responses:
+        '200':
+          description: Reinit slot response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseSlot'
+  /api/v1/edge/slots/{slotId}/vnc-info:
+    get:
+      summary: Get slot VNC info
+      description: 返回 slot 视角的 VNC/noVNC 连接信息。
+      parameters:
+        - $ref: '#/components/parameters/SlotID'
+      responses:
+        '200':
+          description: Slot VNC info response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseSlotVNCInfo'
+  /api/v1/edge/slots/{slotId}/cdp-info:
+    get:
+      summary: Get slot CDP info
+      description: 返回 slot 视角的 CDP 连接信息。
+      parameters:
+        - $ref: '#/components/parameters/SlotID'
+      responses:
+        '200':
+          description: Slot CDP info response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseSlotCDPInfo'
+  /api/v1/edge/browser-envs:
+    post:
+      summary: Create browser env
+      description: |
+        在当前 Client 本机创建一个新的浏览器环境包。
+        当前按 old 设计方式执行：`profile.json` 是唯一详细配置文档，不保存运行状态；
+        创建成功后主状态进入 `created`，不自动 run。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBrowserEnvRequest'
+      responses:
+        '200':
+          description: Browser env created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseCreateBrowserEnv'
+  /api/v1/edge/browser-envs/{envId}/run:
+    post:
+      summary: Run browser env
+      description: |
+        启动指定环境包，并通过长链路任务完成容器启动、CDP 检查和运行保护验证。
+        这条正式业务接口应使用 SSE，返回 `taskId/eventsUrl`。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunBrowserEnvRequest'
+      responses:
+        '200':
+          description: Run task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/browser-envs/{envId}/stop:
+    post:
+      summary: Stop browser env
+      description: |
+        按环境包停止当前 Client 本机浏览器容器，并同步运行态摘要。
+        当前按 old 和 project 口径，stop 只围绕 SQLite 索引和 container.json 收口，
+        不重新读取 profile/proxy/fingerprint 这类完整资产材料。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopBrowserEnvRequest'
+      responses:
+        '200':
+          description: Stop browser env response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseStopBrowserEnv'
+  /api/v1/edge/tasks/{taskId}/events:
+    get:
+      summary: Subscribe task events
+      description: |
+        订阅长链路任务的 SSE 事件流。
+        只要接口文档声明返回 `taskId/eventsUrl`，就应通过这条统一入口订阅任务进度和最终结论。
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+      responses:
+        '200':
+          description: Task event stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/TaskEvent'
+  /api/v1/edge/browser-envs/{envId}/proxy:
+    patch:
+      summary: Update browser env proxy
+      description: |
+        修改指定环境包的代理配置。
+        只有当这次修改触发明显多阶段、耗时较长的运行侧重新验证时，才返回 `taskId/eventsUrl` 并使用 SSE；
+        如果只是快速完成文件落盘与摘要更新，同步 HTTP 已足够表达结果，则直接返回同步结果。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBrowserEnvProxyRequest'
+      responses:
+        '200':
+          description: Proxy update result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseUpdateBrowserEnvProxy'
+                  - $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/browser-envs/{envId}/backup:
+    post:
+      summary: Backup browser env
+      description: |
+        生成标准备份包并在成功后释放本机运行目录。
+        这条接口应使用 SSE，返回 `taskId/eventsUrl`。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Backup task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/browser-envs/{envId}/restore:
+    post:
+      summary: Restore browser env
+      description: |
+        从本机 `backupPath` 恢复环境目录。
+        restore 只认本机受控 backup tar，不接受上传文件；成功后不自动 run。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Restore task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/browser-envs/{envId}/revalidate:
+    post:
+      summary: Revalidate browser env
+      description: |
+        对异常环境包执行受控重新校验，把它从异常态恢复到可再次尝试运行的待启动状态，但不启动容器。
+        这条接口应使用 SSE，返回 `taskId/eventsUrl`。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Revalidate task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/browser-envs/import-package:
+    post:
+      summary: Import browser env package
+      description: |
+        导入外部标准环境包。
+        一个请求只允许一个 tar，一个 tar 只允许一个合法 `envId/` 根目录；导入成功后状态为 `created`，不自动 run。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ImportBrowserEnvPackageRequest'
+      responses:
+        '200':
+          description: Import task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/browser-envs/{envId}/package:
+    delete:
+      summary: Delete browser env package
+      description: |
+        彻底删除当前节点上的环境包资产、登录态目录、已停止容器和 SQLite 索引。
+        当前正式口径下不允许在 running 状态直接 delete，也不允许接口内部偷偷 stop。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Delete task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/packages/{packageId}/runtime-view:
+    get:
+      summary: Get package runtime view (legacy)
+      deprecated: true
+      description: |
+        兼容期旧入口，只返回本机 `package_runtime_views` 当前态。
+        正式新能力不要再依赖这条接口。
+      parameters:
+        - $ref: '#/components/parameters/PackageID'
+      responses:
+        '200':
+          description: Package runtime view response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponsePackageRuntimeView'
+  /api/v1/edge/packages/{packageId}/run:
+    post:
+      summary: Run package (legacy)
+      deprecated: true
+      description: |
+        兼容期旧入口，只围绕本机 package/slot/runtime relation 状态机工作。
+        正式 run 应统一使用 `browser-envs/{envId}/run`。
+      parameters:
+        - $ref: '#/components/parameters/PackageID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunPackageRequest'
+      responses:
+        '200':
+          description: Package runtime view response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponsePackageRuntimeView'
+  /api/v1/edge/packages/{packageId}/stop:
+    post:
+      summary: Stop package (legacy)
+      deprecated: true
+      description: |
+        兼容期旧入口，只围绕本机运行关系和 slot 释放收口。
+        正式 stop 应统一使用 `browser-envs/{envId}/stop`。
+      parameters:
+        - $ref: '#/components/parameters/PackageID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopPackageRequest'
+      responses:
+        '200':
+          description: Package runtime view response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponsePackageRuntimeView'
+components:
+  parameters:
+    SlotID:
+      name: slotId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: slot001
+    EnvID:
+      name: envId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: 906090001_tk_324867594169356288
+    PackageID:
+      name: packageId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: 906090001_tk_324867594169356288
+    TaskID:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: edge-task-run-001
+  schemas:
+    ApiResponseBase:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 1000
+        message:
+          type: string
+          example: success
+    ApiResponseGeneric:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              type: object
+              additionalProperties: true
+    ApiResponseHealth:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/HealthResponse'
+    ApiResponseDeviceInfo:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DeviceInfo'
+    ApiResponseNodeRegistrationStatus:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/NodeRegistrationStatus'
+    ApiResponseNodeRegistration:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/NodeRegistrationState'
+    ApiResponseNodeRegistrationAssign:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/NodeRegistrationAssignResult'
+    ApiResponseSlot:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/Slot'
+    ApiResponseSlotList:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/Slot'
+    ApiResponseCreateBrowserEnv:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/CreateBrowserEnvResponse'
+    ApiResponseStopBrowserEnv:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/StopBrowserEnvResponse'
+    ApiResponseUpdateBrowserEnvProxy:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/UpdateBrowserEnvProxyResponse'
+    ApiResponseTaskAccepted:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TaskAcceptedResponse'
+    ApiResponsePackageRuntimeView:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/PackageRuntimeView'
+    ApiResponseSlotVNCInfo:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/SlotVNCInfo'
+    ApiResponseSlotCDPInfo:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/SlotCDPInfo'
+    CheckResult:
+      type: object
+      properties:
+        status:
+          type: string
+          example: healthy
+        message:
+          type: string
+          example: http 服务可响应
+    HealthResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        status:
+          type: string
+          example: healthy
+        service:
+          type: string
+          example: Private_Browser_Client
+        mode:
+          type: string
+          example: docker
+        version:
+          type: string
+          example: 0.2.0
+        configFile:
+          type: string
+          example: /app/Settings/config-docker.yaml
+        dockerApi:
+          type: string
+          example: http://192.168.10.119:2375
+        checkedAt:
+          type: integer
+          format: int64
+        checks:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/CheckResult'
+    DeviceInfo:
+      type: object
+      properties:
+        os:
+          type: string
+          example: linux
+        arch:
+          type: string
+          example: amd64
+        dockerApiUrl:
+          type: string
+          example: http://192.168.10.119:2375
+        discoveryMode:
+          type: string
+          example: independent-intranet
+    NodeRegistrationState:
+      type: object
+      properties:
+        clientId:
+          type: string
+          description: Node Server 分配的中心 clientId，格式示例按 mainAccountId + 4 位设备序号。
+          example: 9060901190001
+        mainAccountId:
+          type: string
+          example: "906090119"
+        nodeServerBaseUrl:
+          type: string
+          example: http://127.0.0.1:3400
+        nodeName:
+          type: string
+          example: node-0001
+        baseUrl:
+          type: string
+          example: http://192.168.10.119:3300
+        clientIp:
+          type: string
+          example: 192.168.10.119
+        dockerApiUrl:
+          type: string
+          example: http://192.168.10.119:2375
+        source:
+          type: string
+          example: remote-list
+        registeredAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+    AssignNodeRegistrationRequest:
+      type: object
+      required:
+        - clientId
+        - accountId
+      properties:
+        clientId:
+          type: string
+          example: 9060901190001
+        accountId:
+          type: string
+          example: "906090119"
+        source:
+          type: string
+          example: node-bind
+        assignedAt:
+          type: integer
+          format: int64
+          example: 1781609100
+    NodeRegistrationAssignResult:
+      type: object
+      properties:
+        written:
+          type: boolean
+          example: true
+        cachePath:
+          type: string
+          example: /Users/lining/Documents/Browser_virtualization/Private_Browser_Client/data/node-registration.json
+        registration:
+          $ref: '#/components/schemas/NodeRegistrationState'
+    NodeRegistrationStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        configReady:
+          type: boolean
+          example: true
+        configMessage:
+          type: string
+          example: ready
+        nodeName:
+          type: string
+          example: node-0001
+        baseUrl:
+          type: string
+          example: http://192.168.10.119:3300
+        clientIp:
+          type: string
+          example: 192.168.10.119
+        dockerApiUrl:
+          type: string
+          example: http://192.168.10.119:2375
+        serverBaseUrl:
+          type: string
+          example: http://127.0.0.1:3400
+        mainAccountId:
+          type: string
+          example: "906090119"
+        registered:
+          type: boolean
+          example: true
+        lookupStatus:
+          type: string
+          description: 本次查询结果，只表示当前请求看到的远端状态，不表示 Client 本地缓存。
+          example: found
+        lookupMessage:
+          type: string
+          example: Node 已存在当前 Client 的中心登记结果
+        cacheStatus:
+          type: string
+          description: 本地 JSON 缓存状态，只表示留痕文件情况，不表示 Node 当前真相。
+          example: cached
+        cacheMessage:
+          type: string
+          example: 本地 JSON 已留存上次 Node 分配结果
+        cachedRegistration:
+          $ref: '#/components/schemas/NodeRegistrationState'
+        registration:
+          $ref: '#/components/schemas/NodeRegistrationState'
+    Slot:
+      type: object
+      properties:
+        slotId:
+          type: string
+          example: slot001
+        status:
+          type: string
+          example: waiting
+        currentPackageId:
+          type: string
+          nullable: true
+          example: 906090001_tk_324867594169356288
+        currentRunId:
+          type: string
+          nullable: true
+          example: 906090001_tk_324867594169356288-1718500000000000000
+        containerId:
+          type: string
+          nullable: true
+          example: 7a1d2f3c4b5e
+        containerName:
+          type: string
+          nullable: true
+          example: private-browser-slot-slot001
+        runtimeImage:
+          type: string
+          nullable: true
+          example: alpine:3.20
+        containerStatus:
+          type: string
+          nullable: true
+          example: running
+        cdpPort:
+          type: integer
+          nullable: true
+          example: 9201
+        vncPort:
+          type: integer
+          nullable: true
+          example: 9101
+        lastError:
+          type: string
+          nullable: true
+        initializedAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+    SlotVNCInfo:
+      type: object
+      properties:
+        slotId:
+          type: string
+          example: slot001
+        vncPort:
+          type: integer
+          example: 9101
+        vncUrl:
+          type: string
+          example: vnc://192.168.10.119:9101
+        wsUrl:
+          type: string
+          example: ws://192.168.10.119:3300/api/v1/edge/slots/slot001/vnc/ws
+        webVncUrl:
+          type: string
+          example: http://192.168.10.119:3300/web-vnc.html?slot=slot001
+        cdpPort:
+          type: integer
+          nullable: true
+          example: 9201
+    SlotCDPInfo:
+      type: object
+      properties:
+        slotId:
+          type: string
+          example: slot001
+        cdpPort:
+          type: integer
+          example: 9201
+        httpUrl:
+          type: string
+          example: http://192.168.10.119:9201/
+        versionUrl:
+          type: string
+          example: http://192.168.10.119:9201/json/version
+        wsBaseUrl:
+          type: string
+          nullable: true
+          example: ws://192.168.10.119:9201/devtools
+    BrowserEnvPorts:
+      type: object
+      properties:
+        cdp:
+          type: integer
+          example: 8112
+        vnc:
+          type: integer
+          example: 9112
+    CreateBrowserEnvRequest:
+      type: object
+      required:
+        - userId
+        - rpaType
+        - name
+        - runtime
+        - environment
+        - proxy
+      properties:
+        userId:
+          type: string
+          example: "906090001"
+        rpaType:
+          type: string
+          example: tk
+        name:
+          type: string
+          example: tk-main-account
+        runtime:
+          $ref: '#/components/schemas/CreateBrowserEnvRuntime'
+        environment:
+          $ref: '#/components/schemas/CreateBrowserEnvEnvironment'
+        proxy:
+          $ref: '#/components/schemas/CreateBrowserEnvProxy'
+    CreateBrowserEnvRuntime:
+      type: object
+      required:
+        - image
+      properties:
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+        startupUrl:
+          type: string
+          example: https://www.tiktok.com
+        shmSize:
+          type: string
+          example: 1g
+    CreateBrowserEnvEnvironment:
+      type: object
+      required:
+        - timezone
+        - screen
+      properties:
+        timezone:
+          type: string
+          example: Asia/Shanghai
+        language:
+          type: string
+          description: 当前版本固定为 us-en，由 Client 创建时统一写入，不接受外部覆盖。
+          example: us-en
+        screen:
+          $ref: '#/components/schemas/CreateBrowserEnvScreen'
+    CreateBrowserEnvScreen:
+      type: object
+      required:
+        - width
+        - height
+        - depth
+      properties:
+        width:
+          type: integer
+          example: 1440
+        height:
+          type: integer
+          example: 900
+        depth:
+          type: integer
+          example: 24
+    CreateBrowserEnvProxy:
+      type: object
+      required:
+        - enabled
+        - type
+        - configBase64
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        type:
+          type: string
+          example: clash
+        configBase64:
+          type: string
+          example: cG9ydDogNzg5MAptb2RlOiBydWxlCg==
+    CreateBrowserEnvResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        userId:
+          type: string
+          example: "906090001"
+        rpaType:
+          type: string
+          example: tk
+        envSequence:
+          type: integer
+          example: 12
+        ports:
+          $ref: '#/components/schemas/BrowserEnvPorts'
+        envPath:
+          type: string
+          example: data/browser-envs/users/906090001/tk/906090001_tk_324867594169356288
+        files:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            profile: profile.json
+            binding: binding.json
+            container: container.json
+        identityHash:
+          type: string
+          example: sha256:xxx
+        createdAt:
+          type: integer
+          format: int64
+          example: 1718500000
+    RunBrowserEnvRequest:
+      type: object
+      required:
+        - slotId
+      description: |
+        正式 run 请求体只允许声明 slot 选择和是否强制重建容器。
+        不允许在这里临时覆盖 image、proxy、fingerprint、language 或任意 Docker 参数。
+      properties:
+        slotId:
+          type: string
+          description: 指定本次要加载的目标 slot。run 不能省略 slot，也不能让 Client 自行偷选。
+          example: slot001
+        forceRecreate:
+          type: boolean
+          description: 是否强制按重建容器链路执行；它只允许重建容器，不允许删除 browser-data/profile。
+          example: false
+    StopBrowserEnvRequest:
+      type: object
+      description: |
+        stop 请求体只允许声明 Docker stop 的等待时长。
+        不允许在这里传 slotId、force 或任意 Docker 参数透传。
+      properties:
+        timeoutSeconds:
+          type: integer
+          example: 10
+    StopBrowserEnvResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        status:
+          type: string
+          example: stopped
+        containerStatus:
+          type: string
+          example: missing
+        stoppedAt:
+          type: integer
+          format: int64
+          example: 1718501000
+    UpdateBrowserEnvProxyRequest:
+      type: object
+      required:
+        - enabled
+        - type
+        - mode
+        - configBase64
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        type:
+          type: string
+          example: clash
+        mode:
+          type: string
+          example: rule
+        configBase64:
+          type: string
+          example: cG9ydDogNzg5MAptb2RlOiBydWxlCg==
+    UpdateBrowserEnvProxyResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        restartQueued:
+          type: boolean
+          example: false
+        runtimeProtectionStatus:
+          type: string
+          example: pending
+        proxyRuntimeStatus:
+          type: string
+          example: pending
+    ImportBrowserEnvPackageRequest:
+      type: object
+      required:
+        - file
+      properties:
+        file:
+          type: string
+          format: binary
+    TaskAcceptedResponse:
+      type: object
+      properties:
+        taskId:
+          type: string
+          example: edge-task-run-001
+        taskType:
+          type: string
+          example: browser_env_run
+        resourceType:
+          type: string
+          example: browser_env
+        resourceId:
+          type: string
+          nullable: true
+          example: 906090001_tk_324867594169356288
+        restartQueued:
+          type: boolean
+          nullable: true
+          example: true
+        eventsUrl:
+          type: string
+          example: /api/v1/edge/tasks/edge-task-run-001/events
+    RunPackageRequest:
+      type: object
+      required:
+        - slotId
+      properties:
+        slotId:
+          type: string
+          example: slot001
+    StopPackageRequest:
+      type: object
+      required:
+        - slotId
+      properties:
+        slotId:
+          type: string
+          example: slot001
+    PackageRuntimeView:
+      type: object
+      properties:
+        packageId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        currentRunId:
+          type: string
+          nullable: true
+          example: 906090001_tk_324867594169356288-1718500000
+        currentSlotId:
+          type: string
+          nullable: true
+          example: slot001
+        runtimeStatus:
+          type: string
+          example: running
+        lastRunAt:
+          type: integer
+          format: int64
+          nullable: true
+          example: 1718500000
+        lastStopAt:
+          type: integer
+          format: int64
+          nullable: true
+          example: 1718500010
+        lastError:
+          type: string
+          nullable: true
+          example: ""
+    TaskEvent:
+      type: object
+      description: |
+        统一的 SSE 任务事件载荷模型。run/backup/restore/revalidate/import/delete 等任务化接口都应复用这套字段。
+      properties:
+        event:
+          type: string
+          example: task.progress
+        taskId:
+          type: string
+          example: edge-task-run-001
+        taskType:
+          type: string
+          example: browser_env_run
+        resourceType:
+          type: string
+          example: browser_env
+        resourceId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        envId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        slotId:
+          type: string
+          example: slot001
+        stage:
+          type: string
+          example: cdp_check
+        status:
+          type: string
+          example: running
+        message:
+          type: string
+          example: checking cdp endpoint
+        error:
+          type: string
+          nullable: true
+          example: null
+        suggestion:
+          type: string
+          nullable: true
+          example: null
+        timestamp:
+          type: string
+          example: 2026-06-17T15:20:36+08:00
+    CreateSlotRequest:
+      type: object
+      required:
+        - slotId
+      properties:
+        slotId:
+          type: string
+          example: slot001
+    DestroySlotRequest:
+      type: object
+      properties:
+        force:
+          type: boolean
+          example: false

@@ -1,0 +1,40 @@
+# Requirements Boundary
+
+## 1. 职责边界
+
+`Private_Browser_Client` 只负责本机边缘能力：
+
+- 设备信息
+- Docker 状态
+- 本机运行环境
+- HTTP API
+- UDP beacon
+
+不负责：
+
+- 用户体系
+- JWT / API Key / mTLS
+- 多节点调度
+- 设备归属
+- 中心权限判断
+
+## 2. UDP 自动发现边界
+
+- 只广播服务入口和非敏感摘要
+- 不承载业务动作
+- 不传环境包状态
+- 不传敏感内容
+- `discoveryMagic/service/discoveryGroup` 用于识别当前平台和发现域
+
+## 3. 安全边界
+
+- 默认内网受信模式
+- 不直接暴露公网
+- 安全和权限控制由 Server 或网络边界承担
+- 未来进入公网或跨客户网络时再单独设计节点鉴权
+
+## 4. WebVNC 边界
+
+- `WebVNC` 围绕 `slot`，不再围绕 `envId`
+- 入口形态应是 `/web-vnc.html?slot=...`
+- 展示的是 slot 当前承载的浏览器，不是固定包实例
