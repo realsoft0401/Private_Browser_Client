@@ -29,9 +29,6 @@
 - `DELETE /api/v1/edge/browser-envs/{envId}/package`
 - `GET /api/v1/edge/tasks/{taskId}`
 - `GET /api/v1/edge/tasks/{taskId}/events`
-
-## 已完成正式文档、待代码实现
-
 - `GET /api/v1/edge/docker/status`
 - `GET /api/v1/edge/docker/images`
 - `GET /api/v1/edge/docker/containers`
@@ -40,6 +37,9 @@
 - `POST /api/v1/edge/containers/{slotId}/start`
 - `POST /api/v1/edge/containers/{slotId}/stop`
 - `POST /api/v1/edge/containers/{slotId}/restart`
+
+## 已完成正式文档、待代码实现
+
 - `DELETE /api/v1/edge/browser-envs/{envId}/del`
 - `GET /api/v1/edge/browser-envs/{envId}/cdp-test`
 - `PATCH /api/v1/edge/browser-envs/{envId}/proxy`
@@ -61,4 +61,4 @@
 
 - 正式业务优先看 `browser-envs/*`
 - 资源位能力优先看 `slots/*`
-- 不再对外暴露 `packages/*` 旧入口，正式新能力统一收口到 `browser-envs/*`
+- 不再对外暴露 `packages/*` 历史入口，正式新能力统一收口到 `browser-envs/*`

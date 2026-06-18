@@ -62,7 +62,6 @@ Slot 资源位：
 - [get-task-detail.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/get-task-detail.md)
 - [task-events.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/task-events.md)
 - [webvnc-real-runtime-implementation.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/webvnc-real-runtime-implementation.md)
-- [webvnc-reference-old-design.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/webvnc-reference-old-design.md)
 - [full-browser-env-e2e.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/full-browser-env-e2e.md)
 - [browser-env-e2e-create-flow.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/browser-env-e2e-create-flow.md)
 - [browser-env-e2e-import-flow.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/browser-env-e2e-import-flow.md)

@@ -1,6 +1,6 @@
 # Overview
 
-新的 `Private_Browser_Client` 从零开始重建，目录层次沿用 old，业务模型按新方案重建。
+新的 `Private_Browser_Client` 采用当前项目架构重建，聚焦单机边缘执行、slot 资源位和 browser-env 正式生命周期。
 
 当前骨架同时保留：
 
@@ -14,6 +14,6 @@
 ## 当前文档口径
 
 - `docs/api/*.md` 按一接口一文件维护
-- `docs/api/implementation-status.md` 标注“已实现 / 待实现 / 兼容期”
+- `docs/api/implementation-status.md` 标注“已实现 / 待实现”
 - `docs/api/interface-layer-boundary.md` 统一说明 `docker/*`、`containers/*`、`slots/*`、`browser-envs/*` 四层边界
-- `docs/openapi.yaml` 同时覆盖正式接口和兼容期接口
+- `docs/openapi.yaml` 统一维护当前正式接口与已收口待实现接口

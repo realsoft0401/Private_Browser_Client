@@ -63,9 +63,9 @@ Content-Type: application/json
       "mainAccountId": "906090119",
       "nodeServerBaseUrl": "http://127.0.0.1:3400",
       "nodeName": "edge-119",
-      "baseUrl": "http://192.168.10.220:3300",
-      "clientIp": "192.168.10.220",
-      "dockerApiUrl": "http://192.168.10.220:2375",
+      "baseUrl": "http://127.0.0.1:3300",
+      "clientIp": "127.0.0.1",
+      "dockerApiUrl": "http://127.0.0.1:2375",
       "source": "node-bind",
       "registeredAt": 1718500000,
       "updatedAt": 1718500001
@@ -122,7 +122,7 @@ Content-Type: application/json
 - `accountId`
 - `source`
 - `cachePath`
-- `overwriteOldClientId`
+- `overwrittenClientId`
 
 ## 联调验收标准
 

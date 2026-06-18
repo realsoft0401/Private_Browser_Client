@@ -65,6 +65,17 @@ func (s *Service) StopDockerContainer(containerID string, param *model.Container
 	return s.executeContainerAction(containerID, "stop", &timeoutSeconds)
 }
 
+// RestartDockerContainer 重启本机 Docker 容器。
+//
+// 这条能力主要服务 slot 诊断层，不直接表达 browser-env 生命周期语义。
+func (s *Service) RestartDockerContainer(containerID string, param *model.ContainerActionRequest) (*model.ContainerActionResult, error) {
+	timeoutSeconds, err := normalizeContainerTimeout(param, 10)
+	if err != nil {
+		return nil, err
+	}
+	return s.executeContainerAction(containerID, "restart", &timeoutSeconds)
+}
+
 // RemoveDockerContainer 删除 slot 初始化出的本机容器。
 func (s *Service) RemoveDockerContainer(containerID string, force bool) error {
 	id := strings.TrimSpace(containerID)
@@ -110,6 +121,40 @@ func (s *Service) PullDockerImage(image string) ([]model.DockerPullEvent, error)
 		return events, fmt.Errorf("docker api pull image failed: %w", err)
 	}
 	return events, nil
+}
+
+// RemoveDockerImage 删除本机 Docker 镜像。
+//
+// 职责边界：
+// - 只在本机 Docker 上执行 remove image；
+// - 不判断业务上有没有环境包还在引用该镜像；
+// - Docker 原始删除结果按最小结构返回给上层记录。
+func (s *Service) RemoveDockerImage(param *model.RemoveImageRequest) ([]model.DockerImageRemoveResult, error) {
+	if param == nil {
+		return nil, fmt.Errorf("请求参数不能为空")
+	}
+	image := strings.TrimSpace(param.Image)
+	if image == "" {
+		return nil, fmt.Errorf("image 不能为空")
+	}
+
+	path := "/images/" + url.PathEscape(image)
+	query := url.Values{}
+	if param.Force {
+		query.Set("force", "1")
+	}
+	if param.NoPrune {
+		query.Set("noprune", "1")
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+
+	result := make([]model.DockerImageRemoveResult, 0)
+	if err := s.fetchDockerJSON(http.MethodDelete, path, nil, &result); err != nil {
+		return nil, fmt.Errorf("docker api remove image failed: %w", err)
+	}
+	return result, nil
 }
 
 func (s *Service) fetchDockerJSON(method string, path string, body io.Reader, target any) error {

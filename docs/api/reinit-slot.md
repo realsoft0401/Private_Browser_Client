@@ -91,7 +91,7 @@ POST /api/v1/edge/slots/slot001/reinit
 
 - `action=reinit-slot`
 - `slotId`
-- `oldContainerId`
+- `previousContainerId`
 - `newContainerId`
 - `error`
 

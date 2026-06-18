@@ -103,7 +103,7 @@ Client 不能：
 
 ## 4.4 Header 校验规则
 
-第一阶段按 old 方式收口，不重新设计新 token：
+当前统一沿用 Edge API Key 校验口径，不单独增加新的 assign token：
 
 ```text
 X-Edge-API-Key: <edge-api-key>
@@ -112,7 +112,7 @@ X-Edge-API-Key: <edge-api-key>
 Client 必须：
 
 1. 读取 `X-Edge-API-Key`
-2. 按 old 既有 Edge API Key 方式校验
+2. 按当前 Edge API Key 配置校验
 3. Header 缺失或不匹配时直接拒绝
 
 这样做的原因是：
@@ -163,9 +163,9 @@ Private_Browser_Client/data/node-registration.json
   "mainAccountId": "906090119",
   "nodeServerBaseUrl": "http://127.0.0.1:3400",
   "nodeName": "liningdeMacBook-Air.local",
-  "baseUrl": "http://192.168.10.220:3300",
-  "clientIp": "192.168.10.220",
-  "dockerApiUrl": "http://192.168.10.220:2375",
+  "baseUrl": "http://127.0.0.1:3300",
+  "clientIp": "127.0.0.1",
+  "dockerApiUrl": "http://127.0.0.1:2375",
   "source": "node-bind",
   "registeredAt": 1781609100,
   "updatedAt": 1781609100
@@ -231,9 +231,9 @@ Private_Browser_Client/data/node-registration.json
       "mainAccountId": "906090119",
       "nodeServerBaseUrl": "http://127.0.0.1:3400",
       "nodeName": "liningdeMacBook-Air.local",
-      "baseUrl": "http://192.168.10.220:3300",
-      "clientIp": "192.168.10.220",
-      "dockerApiUrl": "http://192.168.10.220:2375",
+      "baseUrl": "http://127.0.0.1:3300",
+      "clientIp": "127.0.0.1",
+      "dockerApiUrl": "http://127.0.0.1:2375",
       "source": "node-bind",
       "registeredAt": 1781609100,
       "updatedAt": 1781609100

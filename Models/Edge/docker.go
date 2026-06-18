@@ -81,3 +81,25 @@ type DockerPullEvent struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
 }
+
+// PullImageRequest 是 `POST /api/v1/edge/docker/pull-image` 的请求体。
+//
+// 当前先只收一条完整 image 引用，不再额外拆 tag，避免前端和 Node 联调时出现两套镜像表达方式。
+type PullImageRequest struct {
+	Image string `json:"image"`
+}
+
+// RemoveImageRequest 是 `POST /api/v1/edge/docker/remove-image` 的请求体。
+//
+// 这条接口只作用于本机 Docker 镜像，不删除环境包目录，也不修复业务引用关系。
+type RemoveImageRequest struct {
+	Image   string `json:"image"`
+	Force   bool   `json:"force"`
+	NoPrune bool   `json:"noPrune"`
+}
+
+// DockerImageRemoveResult 对应 Docker remove image 返回的一条结果摘要。
+type DockerImageRemoveResult struct {
+	Deleted  string `json:"Deleted,omitempty"`
+	Untagged string `json:"Untagged,omitempty"`
+}

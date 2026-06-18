@@ -48,9 +48,9 @@ GET /api/v1/edge/slots/slot001/vnc-info
   "data": {
     "slotId": "slot001",
     "vncPort": 5901,
-    "vncUrl": "192.168.10.220:5901",
-    "wsUrl": "ws://192.168.10.220:3300/api/v1/edge/slots/slot001/vnc/ws",
-    "webVncUrl": "http://192.168.10.220:3300/web-vnc.html?slot=slot001",
+    "vncUrl": "127.0.0.1:5901",
+    "wsUrl": "ws://127.0.0.1:3300/api/v1/edge/slots/slot001/vnc/ws",
+    "webVncUrl": "http://127.0.0.1:3300/web-vnc.html?slot=slot001",
     "cdpPort": 9222
   }
 }

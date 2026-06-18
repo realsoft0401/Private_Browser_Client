@@ -5,12 +5,17 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	edgeModel "private_browser_client/Models/Edge"
 	model "private_browser_client/Models/Slot"
+	taskModel "private_browser_client/Models/Task"
 	"private_browser_client/Pkg/HttpResponse"
 	common "private_browser_client/Repository/Common"
+	edgeService "private_browser_client/Service/Edge"
+	taskService "private_browser_client/Service/Task"
 )
 
 // ListSlots 返回当前 Client 维护的全部 slot 当前态。
@@ -128,6 +133,165 @@ func ProxySlotVNC(c *gin.Context) {
 	}
 }
 
+// StartContainer 是 slot 容器运维诊断接口的 HTTP 入口。
+//
+// 这条接口只直接管理 slot 当前绑定的本机容器，不读取环境包资产，也不承诺 browser-env 已同步。
+func StartContainer(c *gin.Context) {
+	slotID := strings.TrimSpace(c.Param("slotId"))
+	if slotID == "" {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "slotId 不能为空")
+		return
+	}
+
+	taskID := taskService.GetService().CreateTask("docker_container_start", "docker_container", slotID)
+	go runSlotContainerTask(taskID, slotID, "start", nil)
+
+	HttpResponse.ResponseSuccess(c, buildContainerTaskAccepted(taskID, "docker_container_start", slotID))
+}
+
+// StopContainer 是 slot 容器停止诊断接口的 HTTP 入口。
+func StopContainer(c *gin.Context) {
+	slotID := strings.TrimSpace(c.Param("slotId"))
+	if slotID == "" {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "slotId 不能为空")
+		return
+	}
+
+	request, ok := bindOptionalContainerActionRequest(c)
+	if !ok {
+		return
+	}
+
+	taskID := taskService.GetService().CreateTask("docker_container_stop", "docker_container", slotID)
+	go runSlotContainerTask(taskID, slotID, "stop", request)
+
+	HttpResponse.ResponseSuccess(c, buildContainerTaskAccepted(taskID, "docker_container_stop", slotID))
+}
+
+// RestartContainer 是 slot 容器重启诊断接口的 HTTP 入口。
+func RestartContainer(c *gin.Context) {
+	slotID := strings.TrimSpace(c.Param("slotId"))
+	if slotID == "" {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "slotId 不能为空")
+		return
+	}
+
+	request, ok := bindOptionalContainerActionRequest(c)
+	if !ok {
+		return
+	}
+
+	taskID := taskService.GetService().CreateTask("docker_container_restart", "docker_container", slotID)
+	go runSlotContainerTask(taskID, slotID, "restart", request)
+
+	HttpResponse.ResponseSuccess(c, buildContainerTaskAccepted(taskID, "docker_container_restart", slotID))
+}
+
+func bindOptionalContainerActionRequest(c *gin.Context) (*edgeModel.ContainerActionRequest, bool) {
+	request := new(edgeModel.ContainerActionRequest)
+	if err := c.ShouldBindJSON(request); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, http.ErrBodyNotAllowed) {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "请求体解析失败，请检查 timeoutSeconds")
+		return nil, false
+	}
+	return request, true
+}
+
+func buildContainerTaskAccepted(taskID string, taskType string, slotID string) gin.H {
+	return gin.H{
+		"taskId":       taskID,
+		"taskType":     taskType,
+		"resourceType": "docker_container",
+		"resourceId":   slotID,
+		"eventsUrl":    "/api/v1/edge/tasks/" + taskID + "/events",
+	}
+}
+
+func runSlotContainerTask(taskID string, slotID string, action string, request *edgeModel.ContainerActionRequest) {
+	publisher := taskService.GetService()
+	taskType := "docker_container_" + action
+
+	_ = publisher.PublishProgress(taskID, newSlotTaskEvent(taskModel.EventProgress, taskID, taskType, slotID, "load_slot", taskModel.StatusQueued, "task accepted", "", ""))
+
+	slot, err := NewService().GetSlotByID(slotID)
+	if err != nil {
+		_ = publisher.PublishFailed(taskID, newSlotTaskEvent(taskModel.EventFailed, taskID, taskType, slotID, "load_slot_failed", taskModel.StatusFailed, "slot container action failed", err.Error(), "check whether the slot exists"))
+		return
+	}
+
+	containerID := ""
+	if slot.ContainerID != nil {
+		containerID = strings.TrimSpace(*slot.ContainerID)
+	}
+	if containerID == "" {
+		_ = publisher.PublishFailed(taskID, newSlotTaskEvent(taskModel.EventFailed, taskID, taskType, slotID, "check_container_failed", taskModel.StatusFailed, "slot container action failed", "slot 没有关联容器", "recreate or reinitialize the slot first"))
+		return
+	}
+
+	edge := edgeService.NewEdgeService()
+	_ = publisher.PublishProgress(taskID, newSlotTaskEvent(taskModel.EventProgress, taskID, taskType, slotID, "check_docker", taskModel.StatusRunning, "checking docker", "", ""))
+	if _, err = edge.GetDockerStatus(); err != nil {
+		_ = publisher.PublishFailed(taskID, newSlotTaskEvent(taskModel.EventFailed, taskID, taskType, slotID, "check_docker_failed", taskModel.StatusFailed, "slot container action failed", err.Error(), "check docker api availability first"))
+		return
+	}
+
+	stage := action + "_container"
+	_ = publisher.PublishProgress(taskID, newSlotTaskEvent(taskModel.EventProgress, taskID, taskType, slotID, stage, taskModel.StatusRunning, "executing container action", "", ""))
+
+	switch action {
+	case "start":
+		_, err = edge.StartDockerContainer(containerID)
+	case "stop":
+		_, err = edge.StopDockerContainer(containerID, request)
+	case "restart":
+		_, err = edge.RestartDockerContainer(containerID, request)
+	default:
+		err = errors.New("unsupported container action")
+	}
+	if err != nil {
+		updateSlotContainerRuntimeAfterAction(slot, action, false, err)
+		_ = publisher.PublishFailed(taskID, newSlotTaskEvent(taskModel.EventFailed, taskID, taskType, slotID, "finalize_failed", taskModel.StatusFailed, "slot container action failed", err.Error(), "check client logs and docker container state"))
+		return
+	}
+
+	updateSlotContainerRuntimeAfterAction(slot, action, true, nil)
+	_ = publisher.PublishCompleted(taskID, newSlotTaskEvent(taskModel.EventCompleted, taskID, taskType, slotID, "finalize_success", taskModel.StatusSuccess, "slot container action completed", "", ""))
+}
+
+func updateSlotContainerRuntimeAfterAction(slot *model.Slot, action string, success bool, err error) {
+	if slot == nil {
+		return
+	}
+	if success {
+		slot.LastError = nil
+		switch action {
+		case "start", "restart":
+			slot.ContainerStatus = optionalSlotString("running")
+		case "stop":
+			slot.ContainerStatus = optionalSlotString("stopped")
+		}
+	} else if err != nil {
+		slot.LastError = optionalSlotString(err.Error())
+	}
+	_ = NewService().UpdateSlot(slot)
+}
+
+func newSlotTaskEvent(eventName string, taskID string, taskType string, slotID string, stage string, status string, message string, eventError string, suggestion string) taskModel.Event {
+	return taskModel.Event{
+		Event:        eventName,
+		TaskID:       taskID,
+		TaskType:     taskType,
+		ResourceType: "docker_container",
+		ResourceID:   slotID,
+		SlotID:       slotID,
+		Stage:        stage,
+		Status:       status,
+		Message:      message,
+		Error:        eventError,
+		Suggestion:   suggestion,
+		Timestamp:    time.Now().Format(time.RFC3339),
+	}
+}
+
 func publicRequestBase(c *gin.Context) string {
 	scheme := "http"
 	if c.Request.TLS != nil {
@@ -157,4 +321,12 @@ func responseRepositoryError(c *gin.Context, err error) {
 	default:
 		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeServerBusy, err.Error())
 	}
+}
+
+func optionalSlotString(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }

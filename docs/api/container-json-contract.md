@@ -20,7 +20,7 @@
 
 ## 它负责保存什么
 
-按 old 和 `project.md`，`container.json` 只应保存运行摘要，例如：
+按当前项目口径，`container.json` 只应保存运行摘要，例如：
 
 - `envId`
 - `containerName`

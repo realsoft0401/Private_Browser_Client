@@ -8,7 +8,7 @@
 
 ## 设计方式
 
-当前按 old 的设计方式执行：
+当前按正式 browser-env 资产模型执行：
 
 - `profile.json` 是唯一详细配置文档
 - `profile.json` 不增加状态字段

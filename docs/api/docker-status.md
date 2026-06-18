@@ -3,7 +3,7 @@
 ## 当前状态
 
 - 正式协议已收口
-- 当前新 Client 代码暂未实现
+- 当前新 Client 代码已实现
 
 ## 功能目标
 
@@ -36,7 +36,7 @@ GET /api/v1/edge/docker/status
   "code": 1000,
   "message": "success",
   "data": {
-    "dockerApiUrl": "http://192.168.10.119:2375",
+    "dockerApiUrl": "http://127.0.0.1:2375",
     "status": "available",
     "message": "docker is reachable",
     "imagesCount": 8,

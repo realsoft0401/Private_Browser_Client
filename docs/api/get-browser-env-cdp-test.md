@@ -47,8 +47,8 @@ Accept: application/json
     "ok": true,
     "envId": "906090001_tk_324867594169356288",
     "stage": "runtime_evaluate",
-    "httpVersionUrl": "http://192.168.10.119:9201/json/version",
-    "webSocketDebuggerUrl": "ws://192.168.10.119:9201/devtools/browser/abc123",
+    "httpVersionUrl": "http://127.0.0.1:9201/json/version",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:9201/devtools/browser/abc123",
     "browserVersion": "Chrome/137.0.0.0",
     "targetId": "target-001",
     "evaluateResult": {

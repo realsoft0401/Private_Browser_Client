@@ -2,7 +2,7 @@
 
 ## 1. 当前结论
 
-新的 `WebVNC` 不再按 old 的 `envId/package` 视角实现，而是按 `slot` 视角实现。
+新的 `WebVNC` 按 `slot` 视角实现，不再把页面入口绑定到固定环境包。
 
 ## 2. 推荐入口
 
@@ -26,4 +26,4 @@
 
 - WebVNC 连接对象是 slot
 - package 和 slot 的运行关系由运行态决定
-- 不再继续沿用 old 的 `web-vnc.html?envId=...`
+- 不再使用 `web-vnc.html?envId=...` 这类固定环境入口

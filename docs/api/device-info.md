@@ -36,7 +36,7 @@ GET /api/v1/edge/device-info
   "data": {
     "os": "linux",
     "deviceArch": "arm64",
-    "dockerApiUrl": "http://192.168.10.220:2375",
+    "dockerApiUrl": "http://127.0.0.1:2375",
     "discoveryMode": "independent-intranet"
   }
 }
@@ -69,5 +69,5 @@ GET /api/v1/edge/device-info
 
 ## 联调验收标准
 
-- Docker API 若配置为 `127.0.0.1/localhost/0.0.0.0`，返回值应被改写成 Node 可理解的 `clientIp:2375`
+- Docker API 若配置为回环地址或泛监听地址，返回值应被改写成 Node 可理解的 `clientIp:2375`
 - 响应里不能出现 `clientId`

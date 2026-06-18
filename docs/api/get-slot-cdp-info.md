@@ -36,9 +36,9 @@ GET /api/v1/edge/slots/slot001/cdp-info
   "data": {
     "slotId": "slot001",
     "cdpPort": 9222,
-    "httpUrl": "http://192.168.10.220:9222",
-    "versionUrl": "http://192.168.10.220:9222/json/version",
-    "wsBaseUrl": "ws://192.168.10.220:9222"
+    "httpUrl": "http://127.0.0.1:9222",
+    "versionUrl": "http://127.0.0.1:9222/json/version",
+    "wsBaseUrl": "ws://127.0.0.1:9222"
   }
 }
 ```
