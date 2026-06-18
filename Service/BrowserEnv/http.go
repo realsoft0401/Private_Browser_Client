@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,6 +13,36 @@ import (
 	"private_browser_client/Pkg/HttpResponse"
 	common "private_browser_client/Repository/Common"
 )
+
+// ListBrowserEnvs 是正式 browser-env 列表接口的 HTTP 入口。
+//
+// HTTP 层只负责读取 query 参数和地址基准；真正的筛选、分页、默认排除 deleted 和统计口径
+// 都统一留在 Service/Repository，避免接口层变成第二套查询业务。
+func ListBrowserEnvs(c *gin.Context) {
+	page, err := parseOptionalIntQuery(c, "page")
+	if err != nil {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "page 必须是整数")
+		return
+	}
+	pageSize, err := parseOptionalIntQuery(c, "pageSize")
+	if err != nil {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "pageSize 必须是整数")
+		return
+	}
+
+	result, err := NewService().List(model.ListBrowserEnvQuery{
+		UserID:   c.Query("userId"),
+		RPAType:  c.Query("rpaType"),
+		Status:   c.Query("status"),
+		Page:     page,
+		PageSize: pageSize,
+	}, publicRequestBase(c), publicWebSocketBase(c))
+	if err != nil {
+		responseBrowserEnvError(c, err)
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
 
 // CreateBrowserEnv 是正式 browser-env 创建接口的 HTTP 入口。
 func CreateBrowserEnv(c *gin.Context) {
@@ -21,6 +53,16 @@ func CreateBrowserEnv(c *gin.Context) {
 	}
 
 	result, err := NewService().Create(&request)
+	if err != nil {
+		responseBrowserEnvError(c, err)
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
+// GetBrowserEnvDetail 是正式 browser-env 详情接口的 HTTP 入口。
+func GetBrowserEnvDetail(c *gin.Context) {
+	result, err := NewService().GetDetail(c.Param("envId"), publicRequestBase(c), publicWebSocketBase(c))
 	if err != nil {
 		responseBrowserEnvError(c, err)
 		return
@@ -161,4 +203,32 @@ func responseBrowserEnvError(c *gin.Context, err error) {
 	default:
 		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeServerBusy, err.Error())
 	}
+}
+
+func parseOptionalIntQuery(c *gin.Context, key string) (int, error) {
+	value := strings.TrimSpace(c.Query(key))
+	if value == "" {
+		return 0, nil
+	}
+	return strconv.Atoi(value)
+}
+
+func publicRequestBase(c *gin.Context) string {
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	} else if forwardedProto := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")); forwardedProto != "" {
+		scheme = forwardedProto
+	}
+	return scheme + "://" + c.Request.Host
+}
+
+func publicWebSocketBase(c *gin.Context) string {
+	scheme := "ws"
+	if c.Request.TLS != nil {
+		scheme = "wss"
+	} else if forwardedProto := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")); strings.EqualFold(forwardedProto, "https") {
+		scheme = "wss"
+	}
+	return scheme + "://" + c.Request.Host
 }

@@ -225,6 +225,44 @@ func TestStopWithoutActiveRelationReturnsStopped(t *testing.T) {
 	}
 }
 
+func TestGetDetailUsesIndexRuntimeFactAfterStop(t *testing.T) {
+	slotRuntimeService.SetInitializer(fakeBrowserEnvSlotInitializer{})
+	defer slotRuntimeService.SetInitializer(nil)
+	slotRuntimeRebuilder = fakeSlotRuntimeRebuilder
+	defer func() {
+		slotRuntimeRebuilder = rebuildSlotRuntimeForPackage
+	}()
+
+	slotID := "slot103"
+	env := mustCreateBrowserEnvForTest(t, "906090007", "tk", "detail-stop-consistency-test")
+
+	if _, err := slotService.NewService().CreateSlot(slotID); err != nil {
+		t.Fatalf("CreateSlot() error = %v", err)
+	}
+	if _, err := NewService().Run(env.EnvID, model.RunRequest{SlotID: slotID}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if _, err := NewService().Stop(env.EnvID, model.StopRequest{}); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	detail, err := NewService().GetDetail(env.EnvID, "http://127.0.0.1:3300", "ws://127.0.0.1:3300")
+	if err != nil {
+		t.Fatalf("GetDetail() error = %v", err)
+	}
+	if detail.Index.Status != model.BrowserEnvStatusStopped {
+		t.Fatalf("detail index status = %s, want %s", detail.Index.Status, model.BrowserEnvStatusStopped)
+	}
+	if detail.Container.Status != model.ContainerStatusMissing {
+		t.Fatalf("detail container status = %s, want %s", detail.Container.Status, model.ContainerStatusMissing)
+	}
+	if detail.Container.ContainerID != nil {
+		t.Fatalf("detail container id = %v, want nil", *detail.Container.ContainerID)
+	}
+}
+
 func TestRevalidateClearsErrorStateWhenAssetsAreValid(t *testing.T) {
 	result := mustCreateBrowserEnvForTest(t, "906090004", "tk", "revalidate-test")
 	now := time.Now().Unix()

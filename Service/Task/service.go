@@ -14,6 +14,9 @@ type record struct {
 	taskType     string
 	resourceType string
 	resourceID   string
+	createdAt    string
+	updatedAt    string
+	finishedAt   string
 
 	mu          sync.Mutex
 	events      []model.Event
@@ -61,11 +64,14 @@ func GetService() *Service {
 // CreateTask 创建一条新的进程内任务记录。
 func (s *Service) CreateTask(taskType string, resourceType string, resourceID string) string {
 	taskID := fmt.Sprintf("edge-task-%d", time.Now().UnixNano())
+	now := time.Now().Format(time.RFC3339)
 	item := &record{
 		id:           taskID,
 		taskType:     taskType,
 		resourceType: resourceType,
 		resourceID:   resourceID,
+		createdAt:    now,
+		updatedAt:    now,
 		subscribers:  make(map[int]chan model.Event),
 	}
 
@@ -100,6 +106,7 @@ func (s *Service) publish(taskID string, event model.Event, markDone bool) error
 	defer item.mu.Unlock()
 
 	item.events = append(item.events, event)
+	item.updatedAt = event.Timestamp
 	for _, subscriber := range item.subscribers {
 		select {
 		case subscriber <- event:
@@ -108,6 +115,7 @@ func (s *Service) publish(taskID string, event model.Event, markDone bool) error
 	}
 	if markDone && !item.done {
 		item.done = true
+		item.finishedAt = event.Timestamp
 		for id, subscriber := range item.subscribers {
 			close(subscriber)
 			delete(item.subscribers, id)
@@ -158,4 +166,57 @@ func (s *Service) getRecord(taskID string) (*record, error) {
 		return nil, common.ErrNotFound
 	}
 	return item, nil
+}
+
+// GetDetail 返回当前进程内任务的最小摘要。
+//
+// 设计来源：
+// - SSE 只适合实时订阅，前端刷新后仍需要一个普通 HTTP 入口回看当前任务；
+// - Client 任务不做持久化，但在当前进程存活期间应能返回稳定摘要；
+// - 这层只返回最小必要字段，不把完整事件数组默认回给普通详情接口。
+func (s *Service) GetDetail(taskID string) (*model.DetailResponse, error) {
+	item, err := s.getRecord(taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	item.mu.Lock()
+	defer item.mu.Unlock()
+
+	currentStage := ""
+	message := ""
+	status := model.StatusQueued
+	lastError := ""
+	suggestion := ""
+	if len(item.events) > 0 {
+		last := item.events[len(item.events)-1]
+		currentStage = last.Stage
+		message = last.Message
+		status = last.Status
+		lastError = last.Error
+		suggestion = last.Suggestion
+	}
+	if status == "" {
+		if item.done {
+			status = model.StatusSuccess
+		} else {
+			status = model.StatusQueued
+		}
+	}
+
+	return &model.DetailResponse{
+		TaskID:       item.id,
+		TaskType:     item.taskType,
+		ResourceType: item.resourceType,
+		ResourceID:   item.resourceID,
+		Status:       status,
+		CurrentStage: currentStage,
+		Message:      message,
+		EventsURL:    fmt.Sprintf("/api/v1/edge/tasks/%s/events", item.id),
+		CreatedAt:    item.createdAt,
+		UpdatedAt:    item.updatedAt,
+		FinishedAt:   item.finishedAt,
+		Error:        lastError,
+		Suggestion:   suggestion,
+	}, nil
 }

@@ -82,6 +82,68 @@ func (r *Repository) GetByEnvID(envID string) (*model.BrowserEnvIndex, error) {
 	return scanBrowserEnvIndex(row)
 }
 
+// ListBrowserEnvIndexes 查询当前过滤条件下的环境包摘要列表。
+//
+// 这层只做 SQLite 查询和扫描，不读取环境包目录、不碰 Docker；
+// 列表、统计和详情的组合逻辑继续留在 Service 层，避免 Repository 反向承担业务聚合职责。
+func (r *Repository) ListBrowserEnvIndexes(query model.ListBrowserEnvQuery) ([]*model.BrowserEnvIndex, error) {
+	whereSQL, args := buildBrowserEnvWhere(query)
+	offset := (query.Page - 1) * query.PageSize
+	args = append(args, query.PageSize, offset)
+
+	rows, err := common.DB().Query(
+		`SELECT
+			env_id, user_id, rpa_type, name, env_sequence, cdp_port, vnc_port, env_path,
+			status, container_id, container_name, container_status, monitor_status, last_error,
+			backup_path, backup_checksum, backup_size, backup_at,
+			fingerprint_restored, has_browser_data, created_at, updated_at, deleted_at,
+			last_started_at, last_stopped_at, last_checked_at
+		FROM browser_envs `+whereSQL+`
+		ORDER BY env_sequence ASC
+		LIMIT ? OFFSET ?`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query browser_envs failed: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]*model.BrowserEnvIndex, 0)
+	for rows.Next() {
+		item, scanErr := scanBrowserEnvIndex(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate browser_envs failed: %w", err)
+	}
+	return items, nil
+}
+
+// CountBrowserEnvIndexes 统计当前过滤条件下的环境包总数。
+//
+// 它和列表共用 where 构造逻辑，保证分页 total 和 items 使用完全一致的过滤口径。
+func (r *Repository) CountBrowserEnvIndexes(query model.ListBrowserEnvQuery) (int64, error) {
+	whereSQL, args := buildBrowserEnvWhere(query)
+	var total int64
+	if err := common.DB().QueryRow(`SELECT COUNT(1) FROM browser_envs `+whereSQL, args...).Scan(&total); err != nil {
+		return 0, fmt.Errorf("count browser_envs failed: %w", err)
+	}
+	return total, nil
+}
+
+// CountBrowserEnvByStatus 按生命周期状态统计环境包数量。
+func (r *Repository) CountBrowserEnvByStatus(query model.ListBrowserEnvQuery) (map[string]int64, error) {
+	return r.countBrowserEnvGroup(query, "status")
+}
+
+// CountBrowserEnvByRPAType 按 RPA 类型统计环境包数量。
+func (r *Repository) CountBrowserEnvByRPAType(query model.ListBrowserEnvQuery) (map[string]int64, error) {
+	return r.countBrowserEnvGroup(query, "rpa_type")
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }
@@ -134,6 +196,56 @@ func boolToSQLiteInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func (r *Repository) countBrowserEnvGroup(query model.ListBrowserEnvQuery, groupField string) (map[string]int64, error) {
+	if groupField != "status" && groupField != "rpa_type" {
+		return nil, fmt.Errorf("unsupported group field")
+	}
+	whereSQL, args := buildBrowserEnvWhere(query)
+	rows, err := common.DB().Query(`SELECT `+groupField+`, COUNT(1) FROM browser_envs `+whereSQL+` GROUP BY `+groupField, args...)
+	if err != nil {
+		return nil, fmt.Errorf("count browser_envs by %s failed: %w", groupField, err)
+	}
+	defer rows.Close()
+
+	result := map[string]int64{}
+	for rows.Next() {
+		var key string
+		var count int64
+		if err = rows.Scan(&key, &count); err != nil {
+			return nil, fmt.Errorf("scan browser_envs group failed: %w", err)
+		}
+		result[key] = count
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate browser_envs group failed: %w", err)
+	}
+	return result, nil
+}
+
+func buildBrowserEnvWhere(query model.ListBrowserEnvQuery) (string, []any) {
+	conditions := make([]string, 0, 4)
+	args := make([]any, 0, 4)
+	if query.UserID != "" {
+		conditions = append(conditions, "user_id = ?")
+		args = append(args, query.UserID)
+	}
+	if query.RPAType != "" {
+		conditions = append(conditions, "rpa_type = ?")
+		args = append(args, query.RPAType)
+	}
+	if query.Status != "" {
+		conditions = append(conditions, "status = ?")
+		args = append(args, query.Status)
+	} else {
+		conditions = append(conditions, "status != ?")
+		args = append(args, model.BrowserEnvStatusDeleted)
+	}
+	if len(conditions) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(conditions, " AND "), args
 }
 
 // UpdateConfig 同步配置修改后的轻量索引字段。

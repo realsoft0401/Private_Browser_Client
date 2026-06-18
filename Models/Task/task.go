@@ -43,6 +43,28 @@ type Event struct {
 	Timestamp    string `json:"timestamp"`
 }
 
+// DetailResponse 是 `GET /api/v1/edge/tasks/{taskId}` 对外返回的最小任务摘要。
+//
+// Client 任务只保存在当前进程内，不承担长期历史；这个结构的目标是：
+// - 前端刷新后还能回看当前任务摘要；
+// - Node Server 能先拿到任务终态，再决定是否继续回读资源事实；
+// - 不把订阅者、内部锁或完整事件数组直接暴露出去。
+type DetailResponse struct {
+	TaskID       string `json:"taskId"`
+	TaskType     string `json:"taskType"`
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId"`
+	Status       string `json:"status"`
+	CurrentStage string `json:"currentStage"`
+	Message      string `json:"message"`
+	EventsURL    string `json:"eventsUrl"`
+	CreatedAt    string `json:"createdAt"`
+	UpdatedAt    string `json:"updatedAt"`
+	FinishedAt   string `json:"finishedAt,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Suggestion   string `json:"suggestion,omitempty"`
+}
+
 // GetEvent 返回 SSE 外层的事件名。
 //
 // 当前统一保留这个方法，是为了让 SSE 输出层不需要知道具体事件模型结构，

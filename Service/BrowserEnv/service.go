@@ -91,6 +91,52 @@ func (s *Service) Create(request *model.CreateBrowserEnvRequest) (*model.CreateB
 	return buildCreateResponse(ctx), nil
 }
 
+// List 查询本机环境包索引列表。
+//
+// 设计来源：
+// - 当前前端和 Node Server 都需要一个稳定的列表回读入口，不能只靠 task 事件推断状态；
+// - 列表真相源以 SQLite browser_envs 索引为准，不在这里扫描目录或探测 Docker；
+// - running 环境需要补充 slot 视角连接入口，避免列表页再逐条查 VNC/CDP。
+//
+// 职责边界：
+// - 负责参数清洗、SQLite 列表与统计查询、运行态连接地址补充；
+// - 不读取 profile/binding/container 明细；
+// - 不改变任何环境包资产或运行状态。
+func (s *Service) List(query model.ListBrowserEnvQuery, httpBase string, wsBase string) (*model.ListBrowserEnvResponse, error) {
+	normalized, err := normalizeListQuery(query)
+	if err != nil {
+		return nil, err
+	}
+
+	handler := browserEnvDao.NewListModelHandler()
+	total, err := handler.CountBrowserEnvIndexes(normalized)
+	if err != nil {
+		return nil, internalError(err.Error())
+	}
+	byStatus, err := handler.CountBrowserEnvByStatus(normalized)
+	if err != nil {
+		return nil, internalError(err.Error())
+	}
+	byRPAType, err := handler.CountBrowserEnvByRPAType(normalized)
+	if err != nil {
+		return nil, internalError(err.Error())
+	}
+	items, err := handler.ListBrowserEnvIndexes(normalized)
+	if err != nil {
+		return nil, internalError(err.Error())
+	}
+	attachRunningVNCLinks(items, httpBase, wsBase)
+
+	return &model.ListBrowserEnvResponse{
+		Total:     total,
+		Page:      normalized.Page,
+		PageSize:  normalized.PageSize,
+		ByStatus:  byStatus,
+		ByRPAType: byRPAType,
+		Items:     items,
+	}, nil
+}
+
 // Run 按正式 browser-env run 协议创建长链路任务。
 func (s *Service) Run(envID string, request model.RunRequest) (*model.TaskAcceptedResponse, error) {
 	envID = strings.TrimSpace(envID)

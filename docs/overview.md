@@ -15,4 +15,5 @@
 
 - `docs/api/*.md` 按一接口一文件维护
 - `docs/api/implementation-status.md` 标注“已实现 / 待实现 / 兼容期”
+- `docs/api/interface-layer-boundary.md` 统一说明 `docker/*`、`containers/*`、`slots/*`、`browser-envs/*` 四层边界
 - `docs/openapi.yaml` 同时覆盖正式接口和兼容期接口

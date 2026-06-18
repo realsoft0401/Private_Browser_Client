@@ -71,3 +71,15 @@ type RunRequest struct {
 type StopRequest struct {
 	TimeoutSeconds int `json:"timeoutSeconds"`
 }
+
+// ListBrowserEnvQuery 是查询本机环境包索引列表的内部参数。
+//
+// 这组参数只服务 SQLite 列表和统计，不直接参与任何环境包资产写入；
+// page/pageSize 在 Service 层统一清洗，避免前端和 Node Server 各自实现一套分页口径。
+type ListBrowserEnvQuery struct {
+	UserID   string
+	RPAType  string
+	Status   string
+	Page     int
+	PageSize int
+}

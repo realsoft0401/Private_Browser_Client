@@ -2,11 +2,10 @@
 
 ## 目标
 
-这份文档只回答三件事：
+这份文档只回答两件事：
 
 - 哪些接口当前已经真实实现
 - 哪些接口已经完成正式协议收口，但代码还没补完
-- 哪些接口属于兼容期旧入口
 
 ## 已实现的正式接口
 
@@ -23,33 +22,34 @@
 - `POST /api/v1/edge/slots/{slotId}/reinit`
 - `DELETE /api/v1/edge/slots/{slotId}`
 - `POST /api/v1/edge/browser-envs`
+- `GET /api/v1/edge/browser-envs`
+- `GET /api/v1/edge/browser-envs/{envId}`
 - `POST /api/v1/edge/browser-envs/{envId}/run`
 - `POST /api/v1/edge/browser-envs/{envId}/stop`
 - `DELETE /api/v1/edge/browser-envs/{envId}/package`
+- `GET /api/v1/edge/tasks/{taskId}`
 - `GET /api/v1/edge/tasks/{taskId}/events`
 
 ## 已完成正式文档、待代码实现
 
+- `GET /api/v1/edge/docker/status`
+- `GET /api/v1/edge/docker/images`
+- `GET /api/v1/edge/docker/containers`
+- `POST /api/v1/edge/docker/pull-image`
+- `POST /api/v1/edge/docker/remove-image`
+- `POST /api/v1/edge/containers/{slotId}/start`
+- `POST /api/v1/edge/containers/{slotId}/stop`
+- `POST /api/v1/edge/containers/{slotId}/restart`
+- `DELETE /api/v1/edge/browser-envs/{envId}/del`
+- `GET /api/v1/edge/browser-envs/{envId}/cdp-test`
 - `PATCH /api/v1/edge/browser-envs/{envId}/proxy`
+- `PATCH /api/v1/edge/browser-envs/{envId}/proxy-mode`
 - `POST /api/v1/edge/browser-envs/{envId}/backup`
 - `POST /api/v1/edge/browser-envs/{envId}/restore`
 - `POST /api/v1/edge/browser-envs/{envId}/revalidate`
 - `POST /api/v1/edge/browser-envs/import-package`
 
 这些接口保留在文档与 OpenAPI 中，是为了先把正式协议、状态机、SSE 和错误口径固定下来，后续直接按既定协议实现。
-
-## 兼容期旧入口
-
-- `GET /api/v1/edge/packages/{packageId}/runtime-view`
-- `POST /api/v1/edge/packages/{packageId}/run`
-- `POST /api/v1/edge/packages/{packageId}/stop`
-
-口径：
-
-- 只用于兼容过渡和本机调试
-- 不再继续扩展新业务能力
-- OpenAPI 应标记 `deprecated`
-- 正式新能力统一收口到 `browser-envs/*`
 
 ## 工具页与文档入口
 
@@ -61,4 +61,4 @@
 
 - 正式业务优先看 `browser-envs/*`
 - 资源位能力优先看 `slots/*`
-- 兼容期入口只做过渡，不再作为正式能力继续设计
+- 不再对外暴露 `packages/*` 旧入口，正式新能力统一收口到 `browser-envs/*`

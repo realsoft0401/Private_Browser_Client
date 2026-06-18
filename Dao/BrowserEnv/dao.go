@@ -17,6 +17,11 @@ type RuntimeModelHandler struct {
 	repo *repository.Repository
 }
 
+// ListModelHandler 是 browser_envs 列表与统计查询入口。
+type ListModelHandler struct {
+	repo *repository.Repository
+}
+
 // ConfigModelHandler 是 browser_envs 配置轻量回写入口。
 type ConfigModelHandler struct {
 	repo *repository.Repository
@@ -33,6 +38,10 @@ func NewCreateModelHandler() *CreateModelHandler {
 
 func NewRuntimeModelHandler() *RuntimeModelHandler {
 	return &RuntimeModelHandler{repo: repository.NewRepository()}
+}
+
+func NewListModelHandler() *ListModelHandler {
+	return &ListModelHandler{repo: repository.NewRepository()}
 }
 
 func NewConfigModelHandler() *ConfigModelHandler {
@@ -69,6 +78,34 @@ func (h *RuntimeModelHandler) UpdateBrowserEnvBackupState(update *model.BrowserE
 		return errors.New("browser env dao 未初始化")
 	}
 	return h.repo.UpdateBackupState(update)
+}
+
+func (h *ListModelHandler) ListBrowserEnvIndexes(query model.ListBrowserEnvQuery) ([]*model.BrowserEnvIndex, error) {
+	if h == nil || h.repo == nil {
+		return nil, errors.New("browser env dao 未初始化")
+	}
+	return h.repo.ListBrowserEnvIndexes(query)
+}
+
+func (h *ListModelHandler) CountBrowserEnvIndexes(query model.ListBrowserEnvQuery) (int64, error) {
+	if h == nil || h.repo == nil {
+		return 0, errors.New("browser env dao 未初始化")
+	}
+	return h.repo.CountBrowserEnvIndexes(query)
+}
+
+func (h *ListModelHandler) CountBrowserEnvByStatus(query model.ListBrowserEnvQuery) (map[string]int64, error) {
+	if h == nil || h.repo == nil {
+		return nil, errors.New("browser env dao 未初始化")
+	}
+	return h.repo.CountBrowserEnvByStatus(query)
+}
+
+func (h *ListModelHandler) CountBrowserEnvByRPAType(query model.ListBrowserEnvQuery) (map[string]int64, error) {
+	if h == nil || h.repo == nil {
+		return nil, errors.New("browser env dao 未初始化")
+	}
+	return h.repo.CountBrowserEnvByRPAType(query)
 }
 
 func (h *ConfigModelHandler) UpdateBrowserEnvConfig(update *model.BrowserEnvConfigUpdate) error {

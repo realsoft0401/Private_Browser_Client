@@ -7,8 +7,26 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"private_browser_client/Pkg/HttpResponse"
 	common "private_browser_client/Repository/Common"
 )
+
+// GetDetail 是统一任务详情查询入口。
+//
+// 它只返回当前进程内任务摘要，不返回 SSE 流；如果调用方需要过程事件，仍然必须继续订阅
+// `/api/v1/edge/tasks/{taskId}/events`。
+func GetDetail(c *gin.Context) {
+	result, err := GetService().GetDetail(c.Param("taskId"))
+	if err != nil {
+		if err == common.ErrNotFound {
+			HttpResponse.ResponseError(c, HttpResponse.CodeNotFound)
+			return
+		}
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeServerBusy, err.Error())
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
 
 // SubscribeEvents 是统一 SSE 任务订阅入口。
 //

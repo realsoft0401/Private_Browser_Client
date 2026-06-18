@@ -12,7 +12,6 @@ import (
 	EdgeService "private_browser_client/Service/Edge"
 	HealthService "private_browser_client/Service/Health"
 	NodeRegisterService "private_browser_client/Service/NodeRegister"
-	PackageService "private_browser_client/Service/Package"
 	SlotService "private_browser_client/Service/Slot"
 	TaskService "private_browser_client/Service/Task"
 	"private_browser_client/Settings"
@@ -59,7 +58,9 @@ func Setup() *gin.Engine {
 	edge.GET("/slots/:slotId/vnc/ws", SlotService.ProxySlotVNC)
 	edge.POST("/slots/:slotId/reinit", SlotService.ReinitSlot)
 	edge.DELETE("/slots/:slotId", SlotService.DestroySlot)
+	edge.GET("/browser-envs", BrowserEnvService.ListBrowserEnvs)
 	edge.POST("/browser-envs", BrowserEnvService.CreateBrowserEnv)
+	edge.GET("/browser-envs/:envId", BrowserEnvService.GetBrowserEnvDetail)
 	edge.POST("/browser-envs/:envId/run", BrowserEnvService.Run)
 	edge.POST("/browser-envs/:envId/stop", BrowserEnvService.Stop)
 	edge.PATCH("/browser-envs/:envId/proxy", BrowserEnvService.UpdateProxy)
@@ -68,10 +69,8 @@ func Setup() *gin.Engine {
 	edge.POST("/browser-envs/:envId/revalidate", BrowserEnvService.Revalidate)
 	edge.POST("/browser-envs/import-package", BrowserEnvService.ImportPackage)
 	edge.DELETE("/browser-envs/:envId/package", BrowserEnvService.DeletePackage)
+	edge.GET("/tasks/:taskId", TaskService.GetDetail)
 	edge.GET("/tasks/:taskId/events", TaskService.SubscribeEvents)
-	edge.GET("/packages/:packageId/runtime-view", PackageService.GetRuntimeView)
-	edge.POST("/packages/:packageId/run", PackageService.RunPackage)
-	edge.POST("/packages/:packageId/stop", PackageService.StopPackage)
 
 	return r
 }

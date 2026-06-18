@@ -24,3 +24,14 @@
 - 已实现的正式接口：正常展示
 - 已完成协议收口、待实现的正式接口：继续展示，但描述里要说清当前阶段
 - 兼容期旧入口：继续展示，但应标记 `deprecated`
+
+## 5. SSE 标注规则
+
+- 任务发起接口仍然是普通 JSON 响应，不是 `text/event-stream`。
+- 只要某个接口采用 task + SSE 模式，就必须在 Swagger 的 `summary/description` 中明确写清：
+  - 这是一个 SSE 任务接口
+  - 当前只会立即返回 `taskId/eventsUrl`
+  - 最终结果必须继续订阅 `/api/v1/edge/tasks/{taskId}/events`
+- 真正的事件订阅接口才允许在 OpenAPI 中声明：
+  - `content: text/event-stream`
+- 不允许把 SSE 订阅接口伪装成普通 JSON，也不允许把“任务已接单”写成“动作已最终成功”。

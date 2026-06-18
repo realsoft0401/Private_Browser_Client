@@ -38,6 +38,140 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponseDeviceInfo'
+  /api/v1/edge/docker/status:
+    get:
+      summary: Get docker status
+      description: |
+        返回当前 Client 本机 Docker 的最小可用性摘要。
+        这是只读接口，不返回完整镜像或容器明细。
+      responses:
+        '200':
+          description: Docker status response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseDockerStatus'
+  /api/v1/edge/docker/images:
+    get:
+      summary: List docker images
+      description: |
+        返回当前 Client 本机 Docker 镜像摘要列表。
+        这是只读接口，不做镜像策略判断。
+      responses:
+        '200':
+          description: Docker images response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseDockerImages'
+  /api/v1/edge/docker/containers:
+    get:
+      summary: List project docker containers
+      description: |
+        返回当前项目相关的本机 Docker 容器摘要列表。
+        只返回本项目相关容器，不暴露宿主机无关容器。
+      responses:
+        '200':
+          description: Docker containers response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseDockerContainers'
+  /api/v1/edge/docker/pull-image:
+    post:
+      summary: Pull docker image (SSE task)
+      description: |
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台在本机执行 Docker pull。
+        最终结果必须继续订阅 `/api/v1/edge/tasks/{taskId}/events`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PullDockerImageRequest'
+      responses:
+        '200':
+          description: Pull image task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/docker/remove-image:
+    post:
+      summary: Remove docker image (SSE task)
+      description: |
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台在本机删除指定 Docker 镜像。
+        最终结果必须继续订阅 `/api/v1/edge/tasks/{taskId}/events`。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveDockerImageRequest'
+      responses:
+        '200':
+          description: Remove image task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/containers/{slotId}/start:
+    post:
+      summary: Start slot container (SSE task)
+      description: |
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台启动指定 slot 对应的本机容器。
+        这是运维诊断接口，不等价于 browser-env 业务主入口。
+      parameters:
+        - $ref: '#/components/parameters/SlotID'
+      responses:
+        '200':
+          description: Container start task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/containers/{slotId}/stop:
+    post:
+      summary: Stop slot container (SSE task)
+      description: |
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台停止指定 slot 对应的本机容器。
+        这是运维诊断接口，不等价于 browser-env stop。
+      parameters:
+        - $ref: '#/components/parameters/SlotID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContainerStopRequest'
+      responses:
+        '200':
+          description: Container stop task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/containers/{slotId}/restart:
+    post:
+      summary: Restart slot container (SSE task)
+      description: |
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台重启指定 slot 对应的本机容器。
+        这是运维诊断接口，不替代 browser-env run/stop。
+      parameters:
+        - $ref: '#/components/parameters/SlotID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContainerRestartRequest'
+      responses:
+        '200':
+          description: Container restart task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskAccepted'
   /api/v1/edge/node-registration:
     get:
       summary: Get node registration status
@@ -173,6 +307,54 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiResponseSlotCDPInfo'
   /api/v1/edge/browser-envs:
+    get:
+      summary: List browser envs
+      description: |
+        查询当前 Client 本机的浏览器环境包索引列表。
+        这是只读摘要接口，返回分页、简单统计和环境包列表，不返回代理明文、
+        fingerprint raw 或 browser-data 登录态内容。
+      parameters:
+        - name: userId
+          in: query
+          required: false
+          schema:
+            type: string
+          example: "906090001"
+        - name: rpaType
+          in: query
+          required: false
+          schema:
+            type: string
+          example: tk
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [created, running, stopped, backed_up, deleted, error]
+          example: running
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+          example: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+          example: 20
+      responses:
+        '200':
+          description: Browser env list response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseBrowserEnvList'
     post:
       summary: Create browser env
       description: |
@@ -194,10 +376,14 @@ paths:
                 $ref: '#/components/schemas/ApiResponseCreateBrowserEnv'
   /api/v1/edge/browser-envs/{envId}/run:
     post:
-      summary: Run browser env
+      summary: Run browser env (SSE task)
       description: |
-        启动指定环境包，并通过长链路任务完成容器启动、CDP 检查和运行保护验证。
-        这条正式业务接口应使用 SSE，返回 `taskId/eventsUrl`。
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台按 envId 读取本机环境包资产，
+        执行 slot 容器切换、浏览器容器启动和正式状态收口。
+
+        这条接口不是同步最终结果接口。调用方必须继续订阅
+        `/api/v1/edge/tasks/{taskId}/events`，观察 queued/running/completed/failed
+        事件，才能确认本次 run 的最终结论。
       parameters:
         - $ref: '#/components/parameters/EnvID'
       requestBody:
@@ -235,21 +421,58 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponseStopBrowserEnv'
-  /api/v1/edge/tasks/{taskId}/events:
+  /api/v1/edge/browser-envs/{envId}:
     get:
-      summary: Subscribe task events
+      summary: Get browser env detail
       description: |
-        订阅长链路任务的 SSE 事件流。
-        只要接口文档声明返回 `taskId/eventsUrl`，就应通过这条统一入口订阅任务进度和最终结论。
+        查询单个浏览器环境包详情，组合 SQLite 索引、profile、binding、container、
+        proxy 摘要和一致性检查结果。
+        该接口不返回代理明文和 fingerprint raw。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Browser env detail response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseBrowserEnvDetail'
+  /api/v1/edge/tasks/{taskId}:
+    get:
+      summary: Get task detail
+      description: |
+        查询当前 Client 进程内的短期任务摘要。
+        这不是 SSE 接口；如果任务仍在执行中，调用方仍应继续订阅
+        `/api/v1/edge/tasks/{taskId}/events`。
       parameters:
         - $ref: '#/components/parameters/TaskID'
       responses:
         '200':
-          description: Task event stream
+          description: Task detail response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseTaskDetail'
+  /api/v1/edge/tasks/{taskId}/events:
+    get:
+      summary: Subscribe task SSE events (SSE)
+      description: |
+        SSE 事件流接口，返回 `text/event-stream`。
+
+        只要某个业务接口说明“立即返回 `taskId/eventsUrl`”，调用方就应该通过这条统一入口
+        继续订阅任务过程，而不是把接单响应误解成最终结果。
+
+        当前事件流会先补发该任务已记录的历史事件，再继续推送后续事件；
+        典型事件包括 `task.progress`、`task.completed`、`task.failed`。
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+      responses:
+        '200':
+          description: SSE event stream
           content:
             text/event-stream:
               schema:
-                $ref: '#/components/schemas/TaskEvent'
+                type: string
   /api/v1/edge/browser-envs/{envId}/proxy:
     patch:
       summary: Update browser env proxy
@@ -274,12 +497,39 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/ApiResponseUpdateBrowserEnvProxy'
                   - $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/browser-envs/{envId}/proxy-mode:
+    patch:
+      summary: Update browser env proxy mode
+      description: |
+        只切换代理配置里的 mode，不上传整份代理配置。
+        只有当运行中环境触发明显多阶段重建时，才返回 `taskId/eventsUrl` 并使用 SSE；
+        否则同步返回结果。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBrowserEnvProxyModeRequest'
+      responses:
+        '200':
+          description: Proxy mode update result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ApiResponseUpdateBrowserEnvProxyMode'
+                  - $ref: '#/components/schemas/ApiResponseTaskAccepted'
   /api/v1/edge/browser-envs/{envId}/backup:
     post:
-      summary: Backup browser env
+      summary: Backup browser env (SSE task)
       description: |
-        生成标准备份包并在成功后释放本机运行目录。
-        这条接口应使用 SSE，返回 `taskId/eventsUrl`。
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台生成标准备份包，
+        并在校验成功后释放本机运行目录和本次运行关系。
+
+        调用方必须继续订阅 `/api/v1/edge/tasks/{taskId}/events`，
+        以确认备份是否真正完成，而不是只看接单成功。
       parameters:
         - $ref: '#/components/parameters/EnvID'
       responses:
@@ -291,10 +541,13 @@ paths:
                 $ref: '#/components/schemas/ApiResponseTaskAccepted'
   /api/v1/edge/browser-envs/{envId}/restore:
     post:
-      summary: Restore browser env
+      summary: Restore browser env (SSE task)
       description: |
-        从本机 `backupPath` 恢复环境目录。
-        restore 只认本机受控 backup tar，不接受上传文件；成功后不自动 run。
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台从本机 `backupPath`
+        恢复环境目录。
+
+        restore 只认当前 Client 本机受控 backup tar，不接受上传文件；
+        成功后不自动 run。最终恢复结果必须通过 SSE 事件确认。
       parameters:
         - $ref: '#/components/parameters/EnvID'
       responses:
@@ -306,10 +559,12 @@ paths:
                 $ref: '#/components/schemas/ApiResponseTaskAccepted'
   /api/v1/edge/browser-envs/{envId}/revalidate:
     post:
-      summary: Revalidate browser env
+      summary: Revalidate browser env (SSE task)
       description: |
-        对异常环境包执行受控重新校验，把它从异常态恢复到可再次尝试运行的待启动状态，但不启动容器。
-        这条接口应使用 SSE，返回 `taskId/eventsUrl`。
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台对异常环境包执行受控重新校验，
+        把它从异常态恢复到可再次尝试运行的待启动状态，但不启动容器。
+
+        最终校验结论必须通过 `/api/v1/edge/tasks/{taskId}/events` 观察。
       parameters:
         - $ref: '#/components/parameters/EnvID'
       responses:
@@ -321,10 +576,12 @@ paths:
                 $ref: '#/components/schemas/ApiResponseTaskAccepted'
   /api/v1/edge/browser-envs/import-package:
     post:
-      summary: Import browser env package
+      summary: Import browser env package (SSE task)
       description: |
-        导入外部标准环境包。
-        一个请求只允许一个 tar，一个 tar 只允许一个合法 `envId/` 根目录；导入成功后状态为 `created`，不自动 run。
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台导入外部标准环境包。
+
+        一个请求只允许一个 tar，一个 tar 只允许一个合法 `envId/` 根目录；
+        导入成功后状态为 `created`，不自动 run。最终导入是否成功，必须通过 SSE 事件确认。
       requestBody:
         required: true
         content:
@@ -340,10 +597,13 @@ paths:
                 $ref: '#/components/schemas/ApiResponseTaskAccepted'
   /api/v1/edge/browser-envs/{envId}/package:
     delete:
-      summary: Delete browser env package
+      summary: Delete browser env package (SSE task)
       description: |
-        彻底删除当前节点上的环境包资产、登录态目录、已停止容器和 SQLite 索引。
+        SSE 任务化接口。立即返回 JSON `taskId/eventsUrl`，后台彻底删除当前节点上的环境包资产、
+        登录态目录、已停止容器和 SQLite 索引。
+
         当前正式口径下不允许在 running 状态直接 delete，也不允许接口内部偷偷 stop。
+        删除是否真正完成，必须通过 SSE 事件确认。
       parameters:
         - $ref: '#/components/parameters/EnvID'
       responses:
@@ -353,66 +613,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponseTaskAccepted'
-  /api/v1/edge/packages/{packageId}/runtime-view:
+  /api/v1/edge/browser-envs/{envId}/del:
+    delete:
+      summary: Delete browser env runtime image
+      description: |
+        只删除环境包关联的本机 Docker 运行镜像，不删除环境包目录、
+        browser-data/profile、container.json 或 SQLite 索引。
+        这是同步 HTTP 接口，不使用 SSE。
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      responses:
+        '200':
+          description: Delete browser env image response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseDeleteBrowserEnvImage'
+  /api/v1/edge/browser-envs/{envId}/cdp-test:
     get:
-      summary: Get package runtime view (legacy)
-      deprecated: true
+      summary: Test browser env CDP
       description: |
-        兼容期旧入口，只返回本机 `package_runtime_views` 当前态。
-        正式新能力不要再依赖这条接口。
+        基础 CDP 连通性诊断接口。
+        只判断 CDP 自身是否可用，不判断 timezone 和代理出口。
       parameters:
-        - $ref: '#/components/parameters/PackageID'
+        - $ref: '#/components/parameters/EnvID'
       responses:
         '200':
-          description: Package runtime view response
+          description: Browser env CDP test response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiResponsePackageRuntimeView'
-  /api/v1/edge/packages/{packageId}/run:
-    post:
-      summary: Run package (legacy)
-      deprecated: true
-      description: |
-        兼容期旧入口，只围绕本机 package/slot/runtime relation 状态机工作。
-        正式 run 应统一使用 `browser-envs/{envId}/run`。
-      parameters:
-        - $ref: '#/components/parameters/PackageID'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RunPackageRequest'
-      responses:
-        '200':
-          description: Package runtime view response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponsePackageRuntimeView'
-  /api/v1/edge/packages/{packageId}/stop:
-    post:
-      summary: Stop package (legacy)
-      deprecated: true
-      description: |
-        兼容期旧入口，只围绕本机运行关系和 slot 释放收口。
-        正式 stop 应统一使用 `browser-envs/{envId}/stop`。
-      parameters:
-        - $ref: '#/components/parameters/PackageID'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/StopPackageRequest'
-      responses:
-        '200':
-          description: Package runtime view response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponsePackageRuntimeView'
+                $ref: '#/components/schemas/ApiResponseBrowserEnvCDPTest'
 components:
   parameters:
     SlotID:
@@ -424,13 +655,6 @@ components:
       example: slot001
     EnvID:
       name: envId
-      in: path
-      required: true
-      schema:
-        type: string
-      example: 906090001_tk_324867594169356288
-    PackageID:
-      name: packageId
       in: path
       required: true
       schema:
@@ -475,6 +699,31 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/DeviceInfo'
+    ApiResponseDockerStatus:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DockerStatusResponse'
+    ApiResponseDockerImages:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/DockerImageSummary'
+    ApiResponseDockerContainers:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/DockerContainerSummary'
     ApiResponseNodeRegistrationStatus:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -519,6 +768,20 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/CreateBrowserEnvResponse'
+    ApiResponseBrowserEnvList:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BrowserEnvListResponse'
+    ApiResponseBrowserEnvDetail:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BrowserEnvDetailResponse'
     ApiResponseStopBrowserEnv:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -533,6 +796,13 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/UpdateBrowserEnvProxyResponse'
+    ApiResponseUpdateBrowserEnvProxyMode:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/UpdateBrowserEnvProxyModeResponse'
     ApiResponseTaskAccepted:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -540,13 +810,27 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/TaskAcceptedResponse'
-    ApiResponsePackageRuntimeView:
+    ApiResponseTaskDetail:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
         - type: object
           properties:
             data:
-              $ref: '#/components/schemas/PackageRuntimeView'
+              $ref: '#/components/schemas/TaskDetailResponse'
+    ApiResponseDeleteBrowserEnvImage:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/DeleteBrowserEnvImageResponse'
+    ApiResponseBrowserEnvCDPTest:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/BrowserEnvCDPTestResponse'
     ApiResponseSlotVNCInfo:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -616,6 +900,80 @@ components:
         discoveryMode:
           type: string
           example: independent-intranet
+    DockerStatusResponse:
+      type: object
+      properties:
+        dockerApiUrl:
+          type: string
+          example: http://192.168.10.119:2375
+        status:
+          type: string
+          example: available
+        message:
+          type: string
+          example: docker is reachable
+        imagesCount:
+          type: integer
+          example: 8
+        containersCount:
+          type: integer
+          example: 5
+        checkedAt:
+          type: integer
+          format: int64
+          example: 1718501000
+    DockerImageSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          example: sha256:abc123
+        repoTags:
+          type: array
+          items:
+            type: string
+        repoDigests:
+          type: array
+          items:
+            type: string
+        created:
+          type: integer
+          format: int64
+          example: 1718400000
+        size:
+          type: integer
+          format: int64
+          example: 1234567890
+    DockerContainerSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          example: 477d81bdb34f
+        names:
+          type: array
+          items:
+            type: string
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+        state:
+          type: string
+          example: running
+        status:
+          type: string
+          example: Up 10 minutes
+        projectRole:
+          type: string
+          example: slot-runtime
+        slotId:
+          type: string
+          nullable: true
+          example: slot001
+        envId:
+          type: string
+          nullable: true
+          example: 906090001_tk_324867594169356288
     NodeRegistrationState:
       type: object
       properties:
@@ -831,6 +1189,290 @@ components:
         vnc:
           type: integer
           example: 9112
+    BrowserEnvSummary:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        userId:
+          type: string
+          example: "906090001"
+        rpaType:
+          type: string
+          example: tk
+        name:
+          type: string
+          example: tk-main-account
+        envSequence:
+          type: integer
+          example: 1
+        cdpPort:
+          type: integer
+          nullable: true
+          example: 9201
+        vncPort:
+          type: integer
+          nullable: true
+          example: 9101
+        vncUrl:
+          type: string
+          nullable: true
+          example: vnc://192.168.10.119:9101
+        vncWsUrl:
+          type: string
+          nullable: true
+          example: ws://192.168.10.119:3300/api/v1/edge/slots/slot001/vnc/ws
+        webVncUrl:
+          type: string
+          nullable: true
+          example: http://192.168.10.119:3300/web-vnc.html?slot=slot001
+        envPath:
+          type: string
+          example: data/browser-envs/users/906090001/tk/906090001_tk_324867594169356288
+        status:
+          type: string
+          example: running
+        containerId:
+          type: string
+          nullable: true
+          example: ec0e1a8439926eeaee58bacf368387e0038dc0b106353b9c5d61fb0aca92978d
+        containerName:
+          type: string
+          nullable: true
+          example: private-browser-slot-slot001
+        containerStatus:
+          type: string
+          example: running
+        monitorStatus:
+          type: string
+          example: unknown
+        fingerprintRestored:
+          type: boolean
+          example: false
+        hasBrowserData:
+          type: boolean
+          example: true
+        createdAt:
+          type: integer
+          format: int64
+          example: 1718500000
+        updatedAt:
+          type: integer
+          format: int64
+          example: 1718500300
+    BrowserEnvListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 1
+        page:
+          type: integer
+          example: 1
+        pageSize:
+          type: integer
+          example: 20
+        byStatus:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            running: 1
+        byRpaType:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            tk: 1
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BrowserEnvSummary'
+    BrowserEnvDetailIndex:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        userId:
+          type: string
+          example: "906090001"
+        rpaType:
+          type: string
+          example: tk
+        name:
+          type: string
+          example: tk-main-account
+        envSequence:
+          type: integer
+          example: 1
+        cdpPort:
+          type: integer
+          nullable: true
+          example: 9201
+        vncPort:
+          type: integer
+          nullable: true
+          example: 9101
+        vncUrl:
+          type: string
+          nullable: true
+          example: vnc://192.168.10.119:9101
+        vncWsUrl:
+          type: string
+          nullable: true
+          example: ws://192.168.10.119:3300/api/v1/edge/slots/slot001/vnc/ws
+        webVncUrl:
+          type: string
+          nullable: true
+          example: http://192.168.10.119:3300/web-vnc.html?slot=slot001
+        envPath:
+          type: string
+          example: data/browser-envs/users/906090001/tk/906090001_tk_324867594169356288
+        status:
+          type: string
+          example: running
+        containerId:
+          type: string
+          nullable: true
+        containerName:
+          type: string
+          nullable: true
+          example: private-browser-slot-slot001
+        containerStatus:
+          type: string
+          example: running
+        monitorStatus:
+          type: string
+          example: unknown
+        fingerprintRestored:
+          type: boolean
+          example: false
+        hasBrowserData:
+          type: boolean
+          example: true
+        createdAt:
+          type: integer
+          format: int64
+          example: 1718500000
+        updatedAt:
+          type: integer
+          format: int64
+          example: 1718500300
+    BrowserEnvDetailBinding:
+      type: object
+      properties:
+        id:
+          type: string
+          example: binding-906090001-tk-0001
+        version:
+          type: integer
+          example: 3
+        locked:
+          type: boolean
+          example: false
+        identityHash:
+          type: string
+          example: sha256:xxx
+        identity:
+          type: object
+          additionalProperties: true
+    BrowserEnvDetailContainer:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        containerName:
+          type: string
+          example: private-browser-slot-slot001
+        containerId:
+          type: string
+          nullable: true
+        status:
+          type: string
+          example: running
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+        ports:
+          $ref: '#/components/schemas/BrowserEnvPorts'
+    BrowserEnvDetailProxy:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        type:
+          type: string
+          example: clash
+        mode:
+          type: string
+          example: rule
+        configPath:
+          type: string
+          example: proxy/clash.yaml
+    BrowserEnvConsistency:
+      type: object
+      properties:
+        profileMatchesIndex:
+          type: boolean
+          example: true
+        identityHashMatches:
+          type: boolean
+          example: true
+        proxyConfigExists:
+          type: boolean
+          example: true
+        browserDataExists:
+          type: boolean
+          example: true
+        errors:
+          type: array
+          items:
+            type: string
+          example: []
+    BrowserEnvVNCSummary:
+      type: object
+      properties:
+        vncUrl:
+          type: string
+          nullable: true
+          example: vnc://192.168.10.119:9101
+        vncWsUrl:
+          type: string
+          nullable: true
+          example: ws://192.168.10.119:3300/api/v1/edge/slots/slot001/vnc/ws
+        webVncUrl:
+          type: string
+          nullable: true
+          example: http://192.168.10.119:3300/web-vnc.html?slot=slot001
+    BrowserEnvDetailResponse:
+      type: object
+      properties:
+        index:
+          $ref: '#/components/schemas/BrowserEnvDetailIndex'
+        profile:
+          type: object
+          additionalProperties: true
+        binding:
+          $ref: '#/components/schemas/BrowserEnvDetailBinding'
+        container:
+          $ref: '#/components/schemas/BrowserEnvDetailContainer'
+        proxy:
+          $ref: '#/components/schemas/BrowserEnvDetailProxy'
+        fingerprint:
+          type: object
+          additionalProperties: true
+        consistency:
+          $ref: '#/components/schemas/BrowserEnvConsistency'
+        files:
+          type: object
+          additionalProperties:
+            type: string
+        vnc:
+          $ref: '#/components/schemas/BrowserEnvVNCSummary'
     CreateBrowserEnvRequest:
       type: object
       required:
@@ -977,6 +1619,40 @@ components:
         timeoutSeconds:
           type: integer
           example: 10
+    PullDockerImageRequest:
+      type: object
+      required:
+        - image
+      properties:
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+    RemoveDockerImageRequest:
+      type: object
+      required:
+        - image
+      properties:
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+        force:
+          type: boolean
+          example: false
+        noPrune:
+          type: boolean
+          example: false
+    ContainerStopRequest:
+      type: object
+      properties:
+        timeoutSeconds:
+          type: integer
+          example: 10
+    ContainerRestartRequest:
+      type: object
+      properties:
+        timeoutSeconds:
+          type: integer
+          example: 10
     StopBrowserEnvResponse:
       type: object
       properties:
@@ -1028,6 +1704,33 @@ components:
         proxyRuntimeStatus:
           type: string
           example: pending
+    UpdateBrowserEnvProxyModeRequest:
+      type: object
+      required:
+        - mode
+      properties:
+        mode:
+          type: string
+          enum: [rule, global, direct]
+          example: global
+    UpdateBrowserEnvProxyModeResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        mode:
+          type: string
+          example: global
+        restartQueued:
+          type: boolean
+          example: false
+        runtimeProtectionStatus:
+          type: string
+          example: pending
+        proxyRuntimeStatus:
+          type: string
+          example: pending
     ImportBrowserEnvPackageRequest:
       type: object
       required:
@@ -1059,50 +1762,48 @@ components:
         eventsUrl:
           type: string
           example: /api/v1/edge/tasks/edge-task-run-001/events
-    RunPackageRequest:
+    TaskDetailResponse:
       type: object
-      required:
-        - slotId
       properties:
-        slotId:
+        taskId:
           type: string
-          example: slot001
-    StopPackageRequest:
-      type: object
-      required:
-        - slotId
-      properties:
-        slotId:
+          example: edge-task-run-001
+        taskType:
           type: string
-          example: slot001
-    PackageRuntimeView:
-      type: object
-      properties:
-        packageId:
+          example: browser_env_run
+        resourceType:
+          type: string
+          example: browser_env
+        resourceId:
           type: string
           example: 906090001_tk_324867594169356288
-        currentRunId:
+        status:
+          type: string
+          example: success
+        currentStage:
+          type: string
+          example: finalize_success
+        message:
+          type: string
+          example: browser env is ready
+        eventsUrl:
+          type: string
+          example: /api/v1/edge/tasks/edge-task-run-001/events
+        createdAt:
+          type: string
+          example: 2026-06-17T15:20:31+08:00
+        updatedAt:
+          type: string
+          example: 2026-06-17T15:20:40+08:00
+        finishedAt:
           type: string
           nullable: true
-          example: 906090001_tk_324867594169356288-1718500000
-        currentSlotId:
+          example: 2026-06-17T15:20:40+08:00
+        error:
           type: string
           nullable: true
-          example: slot001
-        runtimeStatus:
-          type: string
-          example: running
-        lastRunAt:
-          type: integer
-          format: int64
-          nullable: true
-          example: 1718500000
-        lastStopAt:
-          type: integer
-          format: int64
-          nullable: true
-          example: 1718500010
-        lastError:
+          example: ""
+        suggestion:
           type: string
           nullable: true
           example: ""
@@ -1152,6 +1853,81 @@ components:
         timestamp:
           type: string
           example: 2026-06-17T15:20:36+08:00
+    DeleteBrowserEnvImageResult:
+      type: object
+      properties:
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+        deleted:
+          type: string
+          nullable: true
+          example: sha256:abc123
+        untagged:
+          type: string
+          nullable: true
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+    DeleteBrowserEnvImageResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+        imageRemoved:
+          type: boolean
+          example: true
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeleteBrowserEnvImageResult'
+        warningMessage:
+          type: string
+          example: ""
+        deletedAt:
+          type: integer
+          format: int64
+          example: 1718501000
+    BrowserEnvCDPTestEvaluateResult:
+      type: object
+      properties:
+        type:
+          type: string
+          example: string
+        value:
+          type: string
+          example: ok
+    BrowserEnvCDPTestResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          example: true
+        envId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        stage:
+          type: string
+          example: runtime_evaluate
+        httpVersionUrl:
+          type: string
+          example: http://192.168.10.119:9201/json/version
+        webSocketDebuggerUrl:
+          type: string
+          example: ws://192.168.10.119:9201/devtools/browser/abc123
+        browserVersion:
+          type: string
+          example: Chrome/137.0.0.0
+        targetId:
+          type: string
+          example: target-001
+        evaluateResult:
+          $ref: '#/components/schemas/BrowserEnvCDPTestEvaluateResult'
+        checkedAt:
+          type: string
+          example: 2026-06-17T15:20:40+08:00
     CreateSlotRequest:
       type: object
       required:

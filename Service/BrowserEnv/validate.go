@@ -10,6 +10,12 @@ import (
 
 var userIDRe = regexp.MustCompile(`^\d+$`)
 
+const (
+	defaultListPage     = 1
+	defaultListPageSize = 20
+	maxListPageSize     = 100
+)
+
 // normalizeCreateRequest 统一清洗 create-browser-env 请求。
 //
 // 设计来源：
@@ -85,4 +91,52 @@ func normalizeCreateRequest(param *model.CreateBrowserEnvRequest) (*model.Create
 	param.Proxy.ConfigBase64 = ""
 	param.Proxy.Config = ""
 	return param, nil
+}
+
+// normalizeListQuery 统一清洗 browser-env 列表查询条件。
+//
+// 设计来源：
+// - 前端和 Node Server 都会直接使用这条接口做回读，如果分页和筛选口径不统一，后续统计会互相打架；
+// - 默认不展示 deleted，是为了避免历史删除记录污染正常列表；
+// - 这里只做参数清洗，不访问数据库、不读取任何环境包文件。
+func normalizeListQuery(query model.ListBrowserEnvQuery) (model.ListBrowserEnvQuery, error) {
+	query.UserID = strings.TrimSpace(query.UserID)
+	query.RPAType = strings.ToLower(strings.TrimSpace(query.RPAType))
+	query.Status = strings.ToLower(strings.TrimSpace(query.Status))
+
+	if query.UserID != "" && !userIDRe.MatchString(query.UserID) {
+		return query, invalidError("userId 必须是数字字符串")
+	}
+	if query.RPAType != "" {
+		if _, ok := model.SupportedRPATypes[query.RPAType]; !ok {
+			return query, invalidError("rpaType 仅支持 tk/fb/ins/yt/x/other")
+		}
+	}
+	if query.Status != "" && !isSupportedBrowserEnvStatus(query.Status) {
+		return query, invalidError("status 仅支持 created/running/stopped/backed_up/deleted/error")
+	}
+	if query.Page <= 0 {
+		query.Page = defaultListPage
+	}
+	if query.PageSize <= 0 {
+		query.PageSize = defaultListPageSize
+	}
+	if query.PageSize > maxListPageSize {
+		query.PageSize = maxListPageSize
+	}
+	return query, nil
+}
+
+func isSupportedBrowserEnvStatus(status string) bool {
+	switch status {
+	case model.BrowserEnvStatusCreated,
+		model.BrowserEnvStatusRunning,
+		model.BrowserEnvStatusStopped,
+		model.BrowserEnvStatusBackedUp,
+		model.BrowserEnvStatusDeleted,
+		model.BrowserEnvStatusError:
+		return true
+	default:
+		return false
+	}
 }
