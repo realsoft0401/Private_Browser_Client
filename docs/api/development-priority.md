@@ -60,7 +60,6 @@
 - `GET /api/v1/edge/browser-envs`
 - `GET /api/v1/edge/browser-envs/{envId}`
 - `GET /api/v1/edge/tasks/{taskId}`
-- `GET /api/v1/edge/browser-envs/{envId}/cdp-test`
 
 ### 为什么排在这里
 
@@ -72,7 +71,6 @@
 - 列表能作为主查询入口
 - 详情能看到 index/profile/binding/container 一致性摘要
 - task detail 能支持刷新后继续查看任务
-- cdp-test 能单独判断 CDP 是否可用
 
 ## P2
 
@@ -187,7 +185,7 @@
 1. `GET /api/v1/edge/browser-envs`
 2. `GET /api/v1/edge/browser-envs/{envId}`
 3. `GET /api/v1/edge/tasks/{taskId}`
-4. `GET /api/v1/edge/browser-envs/{envId}/cdp-test`
+4. `GET /api/v1/edge/slots/{slotId}/cdp-info`
 5. `POST /api/v1/edge/browser-envs/{envId}/backup`
 6. `POST /api/v1/edge/browser-envs/{envId}/restore`
 7. `POST /api/v1/edge/browser-envs/import-package`

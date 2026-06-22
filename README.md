@@ -7,7 +7,8 @@
 ## 当前原则
 
 - 目录层次完全沿用 old 项目
-- 业务模型按新的 `package / slot / runtime relation` 重建
+- 业务模型按新的 `browser-env / slot / runtime relation` 重建
+- `browser-env` 是正式业务资产主线，`slot` 只是本机运行承载位
 - old 代码已单独冻结到 `Private_Browser_Client_Old`
 - 新项目从第一天起保留 `Swagger / OpenAPI` 能力骨架
 
@@ -30,6 +31,14 @@
 - 设备编号
 - 多 Client 列表
 - 中心平台权限判断
+- 中心 `clientId` 身份真相维护
+
+这里再特别收口一次：
+
+- Client 不生成 `clientId`
+- Client 不以 `clientId` 作为本机正式 API 输入
+- `clientId` 是 `Private_Browser_Server` 的中心身份字段，不是 Edge 本机资源标识
+- 后续如果保留 `node-registration` 相关接口，也只作为过渡期联调/排障留痕能力，不作为正式业务主链路
 
 ## UDP 自动发现边界
 
@@ -74,6 +83,12 @@ Client 后期需要支持 UDP discovery / beacon，用于在独立内网中让 S
 - 当前查看的是哪个 slot 上的 WebVNC 连接入口
 - 不是某个包天然绑定的固定浏览器
 - 包运行到哪个 slot，就通过哪个 slot 的 WebVNC 查看
+
+但这里的 `slot` 只是运行承载视角，不是产品主叙事：
+
+- 正式业务入口仍然是 `browser-envs/*`
+- `slot` 只是 Client 本机资源层
+- 不应让前端、平台或后续对外文档把本项目理解成“slot 管理平台”
 
 维护原则：
 

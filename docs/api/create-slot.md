@@ -4,6 +4,8 @@
 
 在当前 `Private_Browser_Client` 上创建一个新的本机 `slot` 当前态记录，并立即初始化这个 slot 对应的本机常驻运行容器。
 
+> 当前文档定位：`slot` 是 Client 本机资源层能力。它服务 `browser-env` 运行承载与运维观察，不是平台正式业务资产主线。
+
 ## 业务边界
 
 - 负责接收 `slotId`
@@ -14,6 +16,7 @@
 - 不负责平台端槽位额度判断
 - 不负责 Node Server 中心配额控制
 - 不负责把 package 放进 slot 运行
+- 不负责替代 `browser-envs/*` 正式生命周期
 
 ## 前置校验
 
@@ -115,6 +118,12 @@ Content-Type: application/json
 ## 任务编排
 
 当前接口是同步接口，不创建独立 task。
+
+## 口径说明
+
+- `create-slot` 属于 Client 本机资源层能力
+- 正式业务资产仍然是 `browser-env`
+- 后续对外平台文档、BP 和研发架构叙事，不应把 `slot` 描述成产品核心卖点
 
 ## 成功判定
 

@@ -73,9 +73,9 @@
 
 - `PATCH /api/v1/edge/browser-envs/{envId}/proxy-mode`
 
-### 想测试 CDP 能不能用
+### 想拿到当前 slot 的 CDP 入口
 
-- `GET /api/v1/edge/browser-envs/{envId}/cdp-test`
+- `GET /api/v1/edge/slots/{slotId}/cdp-info`
 
 ### 想看本机 slot 当前状态
 

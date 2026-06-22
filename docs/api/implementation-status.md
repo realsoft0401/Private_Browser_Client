@@ -41,7 +41,6 @@
 ## 已完成正式文档、待代码实现
 
 - `DELETE /api/v1/edge/browser-envs/{envId}/del`
-- `GET /api/v1/edge/browser-envs/{envId}/cdp-test`
 - `PATCH /api/v1/edge/browser-envs/{envId}/proxy`
 - `PATCH /api/v1/edge/browser-envs/{envId}/proxy-mode`
 - `POST /api/v1/edge/browser-envs/{envId}/backup`

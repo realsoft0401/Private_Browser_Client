@@ -11,6 +11,10 @@ Node 发现 Client
   -> Client 写入本地 node-registration.json
 ```
 
+> 文档定位说明：
+> 这是过渡期联调/迁移兼容协议，不是 `Private_Browser_Client` 的长期正式业务主链路。
+> 最新总口径下，中心 `clientId` 身份真相、节点归属和业务放行判断始终属于 `Private_Browser_Server`。
+
 它不讨论：
 
 - Env 生命周期
@@ -78,6 +82,7 @@ Client 不能：
 - 这不是 Client 自注册接口
 - 这不是 discovered 接口
 - 这是“中心已决定，边缘留痕”的受控赋值接口
+- 它只用于过渡期联调兼容，不应被理解成长期正式中心身份同步协议
 
 ## 4. assign 接口定义
 
@@ -89,7 +94,7 @@ Client 不能：
 
 ### 4.2 负责什么
 
-- 校验 `X-Edge-API-Key`
+- 在过渡期兼容旧链路时校验 `X-Edge-API-Key`
 - 校验请求字段
 - 写入本地 `data/node-registration.json`
 - 返回当前本地缓存结果
@@ -120,6 +125,12 @@ Client 必须：
 - Node -> Client 正式受控调用继续共用一套老口径
 - assign 不会变成一条单独裸露的改文件接口
 - 后续 bind/push/其他 Edge 动作的安全边界一致
+
+但这里必须额外说明：
+
+- 这只是当前过渡期兼容 old 联调链路的临时收口
+- 它不代表 `Private_Browser_Client` 正式 V1 已恢复长期 Edge API Key 鉴权体系
+- 如果后续总口径继续坚持“内网受信 + 上游访问控制，不做 Edge 内鉴权”，这条校验链路应继续降级或移除
 
 ## 5. 请求体建议
 

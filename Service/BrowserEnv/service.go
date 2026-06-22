@@ -27,6 +27,21 @@ import (
 
 type Service struct{}
 
+var (
+	// browserEnvContainerStopper 默认执行真实 Docker stop。
+	//
+	// 设计来源：
+	// - 正式 stop 必须优先让浏览器进程走优雅退出，保证 profile/Cookies/IndexedDB 有机会落盘；
+	// - 但测试环境和受限沙箱未必允许访问 Docker 2375，因此这里保留真实默认值并允许测试替换；
+	// - 这样可以把“业务状态收口是否正确”和“当前机器能否访问 Docker”拆开验证。
+	browserEnvContainerStopper = gracefulStopBrowserEnvContainer
+
+	// browserStateFlusher 默认保留 stop 后的短暂落盘缓冲。
+	//
+	// 这段等待对真实运行环境有价值，但测试里不应该为了固定 sleep 才能通过。
+	browserStateFlusher = waitForBrowserStateFlush
+)
+
 // NewService 创建正式 browser-env 协议服务。
 //
 // 这层的职责不是替代底层 Package/Runtime/Slot Service，
@@ -204,10 +219,10 @@ func (s *Service) Stop(envID string, request model.StopRequest) (*model.StopResp
 	}
 
 	stopTimeout := normalizeBrowserEnvStopTimeout(&request)
-	if stopErr := gracefulStopBrowserEnvContainer(relation.SlotID, stopTimeout); stopErr != nil {
+	if stopErr := browserEnvContainerStopper(relation.SlotID, stopTimeout); stopErr != nil {
 		return nil, stopErr
 	}
-	waitForBrowserStateFlush(stopTimeout)
+	browserStateFlusher(stopTimeout)
 
 	view, err := pkgSvc.StopPackage(envID, relation.SlotID)
 	if err != nil {

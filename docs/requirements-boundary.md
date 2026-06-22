@@ -17,6 +17,13 @@
 - 多节点调度
 - 设备归属
 - 中心权限判断
+- 中心 `clientId` 身份维护
+
+补充收口：
+
+- `clientId` 是 Server 中心节点身份，不是 Client 本机资源 ID
+- Client 不应要求正式 Edge API 请求携带 `clientId`
+- 如果当前保留 `node-registration` 相关接口，也只作为过渡期联调与留痕能力
 
 ## 2. UDP 自动发现边界
 
@@ -38,3 +45,8 @@
 - `WebVNC` 围绕 `slot`，不再围绕 `envId`
 - 入口形态应是 `/web-vnc.html?slot=...`
 - 展示的是 slot 当前承载的浏览器，不是固定包实例
+
+补充说明：
+
+- `slot` 是运行承载位，不是正式业务资产
+- 正式业务生命周期主入口仍然是 `browser-envs/*`

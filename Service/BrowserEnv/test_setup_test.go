@@ -3,6 +3,7 @@ package BrowserEnv
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	sqliteInfra "private_browser_client/Infrastructures/SQLite"
@@ -20,7 +21,21 @@ func TestMain(m *testing.M) {
 	if err = sqliteInfra.Init(); err != nil {
 		panic(err)
 	}
+	portAvailabilityChecker = func(port int) error {
+		_ = port
+		return nil
+	}
+	browserEnvContainerStopper = func(slotID string, timeoutSeconds int) error {
+		_, _ = slotID, timeoutSeconds
+		return nil
+	}
+	browserStateFlusher = func(timeoutSeconds int) {
+		_ = timeoutSeconds
+	}
 	code := m.Run()
+	portAvailabilityChecker = ensureTCPPortAvailable
+	browserEnvContainerStopper = gracefulStopBrowserEnvContainer
+	browserStateFlusher = waitForBrowserStateFlush
 	_ = sqliteInfra.Close()
 	os.Exit(code)
 }
@@ -41,7 +56,18 @@ func prepareTestProjectRoot() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err = os.WriteFile(filepath.Join(tempRoot, "Settings", Settings.ConfigFileName), body, 0o644); err != nil {
+	configBody := string(body)
+	replacements := map[string]string{
+		"heartbeat:\n  enabled: true":     "heartbeat:\n  enabled: false",
+		"discovery:\n  enabled: true":     "discovery:\n  enabled: false",
+		"node_register:\n  enabled: true": "node_register:\n  enabled: false",
+		"host_cdp_base_port: 9200":        "host_cdp_base_port: 38200",
+		"host_vnc_base_port: 9100":        "host_vnc_base_port: 39200",
+	}
+	for oldValue, newValue := range replacements {
+		configBody = strings.Replace(configBody, oldValue, newValue, 1)
+	}
+	if err = os.WriteFile(filepath.Join(tempRoot, "Settings", Settings.ConfigFileName), []byte(configBody), 0o644); err != nil {
 		return "", err
 	}
 	return tempRoot, nil

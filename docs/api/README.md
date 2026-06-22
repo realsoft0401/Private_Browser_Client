@@ -12,6 +12,12 @@
 - 正式 REST 接口按“一接口一文件”维护
 - WebSocket / 工具页这类非标准 REST 入口，也单独留文档，避免前后端和联调口径分散
 
+补充口径：
+
+- `browser-envs/*` 是正式业务主线
+- `slots/*` 是本机资源层
+- `node-registration/*` 只作为过渡期联调/排障接口保留，不参与正式业务放行
+
 ## 实现状态总表
 
 - [implementation-status.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/implementation-status.md)
@@ -38,6 +44,11 @@ Node 登记协同：
 
 - [node-registration-status.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/node-registration-status.md)
 - [node-registration-assign.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/node-registration-assign.md)
+
+这里再次强调：
+
+- 这组接口不是长期正式业务主入口
+- 它们的作用是过渡期联调、排障和留痕
 
 Slot 资源位：
 
@@ -70,7 +81,6 @@ Slot 资源位：
 - [run-browser-env.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/run-browser-env.md)
 - [stop-browser-env.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/stop-browser-env.md)
 - [delete-browser-env-image.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/delete-browser-env-image.md)
-- [get-browser-env-cdp-test.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/get-browser-env-cdp-test.md)
 - [delete-browser-env-package.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/delete-browser-env-package.md)
 
 已完成正式文档、待代码实现：

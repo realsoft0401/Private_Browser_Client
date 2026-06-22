@@ -20,6 +20,13 @@ import (
 var (
 	createEnvMu = sync.Mutex{}
 	idGen       = newSnowflakeGenerator(1)
+	// portAvailabilityChecker 默认走真实 TCP 监听探测。
+	//
+	// 设计来源：
+	// - 正式运行时，create/import 仍然需要明确避开已被占用的宿主端口；
+	// - 但测试和受限执行环境里，`net.Listen` 可能被平台直接禁止，导致“探测能力”本身成为噪音；
+	// - 因此这里保留真实默认值，同时允许测试替换成受控 stub，避免把环境限制误判成业务失败。
+	portAvailabilityChecker = ensureTCPPortAvailable
 )
 
 // createContext 集中保存一次 create-browser-env 生成的派生事实。
@@ -149,9 +156,25 @@ func nextAvailableEnvSequenceAndPorts() (int, model.BrowserEnvPorts, error) {
 	if err != nil {
 		return 0, model.BrowserEnvPorts{}, err
 	}
+	cdpBasePort := 8100
+	vncBasePort := 9100
+	if Settings.Conf.SlotRuntimeConfig != nil {
+		if Settings.Conf.SlotRuntimeConfig.HostCDPBasePort > 0 {
+			cdpBasePort = Settings.Conf.SlotRuntimeConfig.HostCDPBasePort
+		}
+		if Settings.Conf.SlotRuntimeConfig.HostVNCBasePort > 0 {
+			vncBasePort = Settings.Conf.SlotRuntimeConfig.HostVNCBasePort
+		}
+	}
 	for sequence := start; sequence < start+10000; sequence++ {
-		ports := model.BrowserEnvPorts{CDP: 8100 + sequence, VNC: 9100 + sequence}
-		if ensureTCPPortAvailable(ports.CDP) == nil && ensureTCPPortAvailable(ports.VNC) == nil {
+		// 这里必须遵守配置里的宿主端口基线，而不是回退到旧代码里的写死端口。
+		//
+		// 设计来源：
+		// - 新 Client 已经把 slot/browser-env 的宿主端口策略收口到 Settings；
+		// - 如果 create 仍然写死 8100/9100，测试环境和实际部署一旦改了基线端口，就会出现“配置写了但实现没用”的假一致；
+		// - 这次 BrowserEnv 测试暴露出的端口冲突，根因就是这里没有真正吃配置。
+		ports := model.BrowserEnvPorts{CDP: cdpBasePort + sequence, VNC: vncBasePort + sequence}
+		if portAvailabilityChecker(ports.CDP) == nil && portAvailabilityChecker(ports.VNC) == nil {
 			return sequence, ports, nil
 		}
 	}

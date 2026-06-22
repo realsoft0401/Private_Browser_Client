@@ -4,6 +4,8 @@
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+data/browser-envs/
+data/node-registration.json
 private_browser_client
 dist/
 build/
