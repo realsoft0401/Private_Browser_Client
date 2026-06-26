@@ -40,7 +40,7 @@ GET /health
     "service": "Private_Browser_Client",
     "mode": "docker",
     "version": "0.2.0",
-    "configFile": "Settings/config-docker.yaml",
+    "configFile": "",
     "dockerApi": "http://127.0.0.1:2375",
     "checkedAt": 1718500000,
     "checks": {

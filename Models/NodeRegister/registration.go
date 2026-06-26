@@ -28,10 +28,22 @@ type RegistrationState struct {
 // - 不负责中心 bind 判定，不负责账号权限判断，也不负责生成 clientId；
 // - 该结构的存在是为了把 Node -> Client assign 协议固定住，避免后续再把字段口径写散。
 type AssignRequest struct {
-	ClientID   string `json:"clientId"`
-	AccountID  string `json:"accountId"`
-	Source     string `json:"source"`
-	AssignedAt int64  `json:"assignedAt"`
+	ClientID          string `json:"clientId"`
+	AccountID         string `json:"accountId"`
+	NodeServerBaseURL string `json:"nodeServerBaseUrl"`
+	Source            string `json:"source"`
+	AssignedAt        int64  `json:"assignedAt"`
+}
+
+// ClearRequest 描述 Node Server 在解绑后要求 Client 清空本地登记留痕的请求。
+//
+// 职责边界：
+// - 这里只负责删除本地 `node-registration.json` 缓存；
+// - 不负责改中心 bind 结果，不负责判断中心归属是否仍有效；
+// - 即使本地缓存已不存在，也应返回可执行结果，避免把“已清空”误报成失败。
+type ClearRequest struct {
+	Source    string `json:"source"`
+	ClearedAt int64  `json:"clearedAt"`
 }
 
 // AssignResult 是 assign 接口成功后的本地写入结果。
@@ -43,6 +55,18 @@ type AssignResult struct {
 	Written      bool               `json:"written"`
 	CachePath    string             `json:"cachePath"`
 	Registration *RegistrationState `json:"registration"`
+}
+
+// ClearResult 是 clear 接口成功后的本地清理结果。
+//
+// 设计来源：
+// - Node unbind 后需要确认 Client 是否已删除本地留痕；
+// - 因此返回里要明确 cachePath、是否原本存在、最终是否已清理。
+type ClearResult struct {
+	Cleared   bool   `json:"cleared"`
+	Existed   bool   `json:"existed"`
+	CachePath string `json:"cachePath"`
+	ClearedAt int64  `json:"clearedAt"`
 }
 
 // StatusView 是给本机 HTTP API 返回的中心登记视图。

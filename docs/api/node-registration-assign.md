@@ -2,15 +2,15 @@
 
 ## 功能目标
 
-接收 Node Server 在 bind 成功后反向下发的 `clientId/accountId`，并写入本地 `node-registration.json` 留痕。
+接收 Node Server 在 bind 成功后下发的 `clientId/accountId`，并写入本地 `node-registration.json` 留痕。
 
-> 当前文档定位：这是过渡期联调/迁移兼容接口，不是 `Private_Browser_Client` 长期正式业务主链路。
+> 当前文档定位：这是 Node bind 成功后把中心唯一设备身份写回 Client 的正式配套接口，但它不参与 discovery，也不直接承担业务放行。
 > 最新总口径下，中心 `clientId` 身份真相属于 `Private_Browser_Server`；Client 不以本地缓存作为正式业务放行依据。
 
 ## 业务边界
 
 - 负责接收 Node 已经决定好的中心身份结果
-- 负责在过渡期兼容旧链路时校验 `X-Edge-API-Key`
+- 负责校验 Node 写回请求的 `X-Edge-API-Key`
 - 负责把结果落到本地 JSON
 - 不负责中心 bind 决策
 - 不负责账号权限判断
@@ -109,7 +109,7 @@ Content-Type: application/json
 
 ## 口径说明
 
-- 该接口只用于过渡期联调、迁移兼容和排障留痕
+- 该接口用于 Node bind 成功后的正式身份写回以及本地留痕
 - 后续正式 V1 不应把“Client 本地已缓存 `clientId`”当成节点已绑定的依据
 - 即使本地 JSON 写入成功，真正有效的节点身份仍以 Server 中心记录为准
 

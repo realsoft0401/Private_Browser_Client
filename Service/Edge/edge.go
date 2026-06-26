@@ -1,8 +1,13 @@
 package Edge
 
 import (
+	"bufio"
 	"net/http"
+	"os"
+	"os/exec"
 	"runtime"
+	"strconv"
+	"strings"
 	"time"
 
 	model "private_browser_client/Models/Edge"
@@ -20,10 +25,13 @@ func NewEdgeService() *Service {
 	}
 }
 
-// GetDeviceInfo 返回当前新 Client 的最小本机设备信息。
+// GetDeviceInfo 返回当前 Client 的本机设备摘要。
 //
-// 当前阶段先保持最小事实模型，让 `/api/v1/edge/device-info` 有稳定返回。
-// 后续真正接入 Docker 探测后，再把 Docker 版本、镜像数、容器数等事实补到这里。
+// 设计来源：
+//   - Node Server 绑定和发现阶段都要依赖 `/api/v1/edge/device-info` 把宿主机摘要落进中心库；
+//   - 之前这里只返回骨架字段，导致 Server 里的 `cpu_cores / memory_total_mb / docker_version`
+//     长期都是默认空值；
+//   - 这次按正式设备摘要口径补齐，但仍坚持“只返回本机事实，不承载中心身份”。
 //
 // 不能退回的原则：
 //   - 这里只能返回 Edge 本机事实；
@@ -31,12 +39,93 @@ func NewEdgeService() *Service {
 //     明确要求的“Client 不生成、不保存、不要求请求携带 clientId”边界。
 func (s *Service) GetDeviceInfo() (*model.DeviceInfo, error) {
 	clientIP := DiscoveryService.CurrentAdvertiseHost()
+	dockerVersion, _ := s.getDockerVersion()
+	memoryTotalMB, _ := detectSystemMemoryMB()
 	return &model.DeviceInfo{
 		OS:            runtime.GOOS,
 		DeviceArch:    runtime.GOARCH,
+		CPUCores:      int64(runtime.NumCPU()),
+		MemoryTotalMB: memoryTotalMB,
 		DockerAPIURL:  resolveNodeVisibleDockerAPIURL(clientIP),
+		DockerVersion: dockerVersion,
 		DiscoveryMode: "independent-intranet",
 	}, nil
+}
+
+// getDockerVersion 读取本机 Docker Engine 版本。
+//
+// 职责边界：
+// - 这里只做设备摘要所需的只读探测；
+// - Docker 不可达时不让整个 device-info 失败，而是把版本留空；
+// - 真正的 Docker 可用性判断仍由 docker/status 和运行动作链路负责。
+func (s *Service) getDockerVersion() (string, error) {
+	dockerAPIURL := currentDockerAPIURL()
+	if strings.TrimSpace(dockerAPIURL) == "" {
+		return "", nil
+	}
+	response := new(model.DockerEngineVersionResponse)
+	if err := s.fetchJSON(dockerAPIURL, http.MethodGet, "/version", nil, response); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(response.Version), nil
+}
+
+// detectSystemMemoryMB 返回宿主机总内存，单位 MB。
+//
+// 设计来源：
+// - Node 中心设备表需要保留最小硬件摘要，便于后续排障和节点比对；
+// - 当前项目不额外引入系统探测第三方依赖，先用标准库覆盖 Linux 和 macOS；
+// - 其余平台暂时返回 0，避免把 discovery/bind 主链路做成强依赖。
+func detectSystemMemoryMB() (int64, error) {
+	switch runtime.GOOS {
+	case "linux":
+		return detectLinuxMemoryMB()
+	case "darwin":
+		return detectDarwinMemoryMB()
+	default:
+		return 0, nil
+	}
+}
+
+func detectLinuxMemoryMB() (int64, error) {
+	file, err := os.Open("/proc/meminfo")
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "MemTotal:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			break
+		}
+		valueKB, parseErr := strconv.ParseInt(fields[1], 10, 64)
+		if parseErr != nil {
+			return 0, parseErr
+		}
+		return valueKB / 1024, nil
+	}
+	if err = scanner.Err(); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
+
+func detectDarwinMemoryMB() (int64, error) {
+	output, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
+	if err != nil {
+		return 0, err
+	}
+	valueBytes, err := strconv.ParseInt(strings.TrimSpace(string(output)), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return valueBytes / 1024 / 1024, nil
 }
 
 // resolveNodeVisibleDockerAPIURL 把本机 Docker API 地址翻译成 Node 可理解的入口。

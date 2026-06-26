@@ -145,7 +145,7 @@ func (s *Service) AssignClientID(ctx context.Context, apiKey string, request Mod
 	state := &Model.RegistrationState{
 		ClientID:          strings.TrimSpace(request.ClientID),
 		MainAccountID:     strings.TrimSpace(request.AccountID),
-		NodeServerBaseURL: strings.TrimRight(strings.TrimSpace(Settings.Conf.NodeRegisterConfig.ServerBaseURL), "/"),
+		NodeServerBaseURL: strings.TrimRight(strings.TrimSpace(request.NodeServerBaseURL), "/"),
 		NodeName:          nodeName,
 		BaseURL:           normalizeURL(baseURL),
 		ClientIP:          strings.TrimSpace(clientIP),
@@ -171,10 +171,50 @@ func (s *Service) AssignClientID(ctx context.Context, apiKey string, request Mod
 	if err = saveCachedState(state); err != nil {
 		return nil, err
 	}
+	DiscoveryService.TriggerHeartbeatNow()
 	return &Model.AssignResult{
 		Written:      true,
 		CachePath:    nodeRegistrationCachePath(),
 		Registration: state,
+	}, nil
+}
+
+// ClearClientID 删除本地 node-registration JSON 留痕。
+//
+// 设计来源：
+// - unbind 后中心归属已经解除，但用户又明确要求 Client 本地也必须同步清空历史留痕；
+// - 这里故意只清理 JSON 缓存，不碰 SQLite、不碰任何 browser-env 资产，避免把“解绑节点”误扩成“清理本机业务状态”；
+// - 即使文件已经不存在，也返回成功结果，让 Node 能把这类场景收口成“已清理”而不是反复报错。
+func (s *Service) ClearClientID(ctx context.Context, apiKey string, request Model.ClearRequest) (*Model.ClearResult, error) {
+	if err := validateAssignAPIKey(apiKey); err != nil {
+		return nil, err
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	path := nodeRegistrationCachePath()
+	_, statErr := os.Stat(path)
+	existed := statErr == nil
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("stat node registration cache failed: %w", statErr)
+	}
+	if existed {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("remove node registration cache failed: %w", err)
+		}
+	}
+	clearedAt := request.ClearedAt
+	if clearedAt <= 0 {
+		clearedAt = time.Now().Unix()
+	}
+	return &Model.ClearResult{
+		Cleared:   true,
+		Existed:   existed,
+		CachePath: path,
+		ClearedAt: clearedAt,
 	}, nil
 }
 
@@ -238,7 +278,7 @@ func buildNodeEdgeClientsListURL() (string, error) {
 func validateConfig() (bool, string) {
 	config := Settings.Conf.NodeRegisterConfig
 	if config == nil || !config.Enabled {
-		return false, "node_register 未启用；如需让 Client 查询中心登记状态并接收 assign，请先在 Settings/config-docker.yaml 打开 node_register.enabled"
+		return false, "node_register 未启用；如需让 Client 查询中心登记状态并接收 assign，请先打开 node_register.enabled"
 	}
 	if strings.TrimSpace(config.ServerBaseURL) == "" {
 		return false, "node_register.server_base_url 不能为空"
@@ -393,6 +433,9 @@ func validateAssignRequest(request Model.AssignRequest) error {
 	}
 	if strings.TrimSpace(request.AccountID) == "" {
 		return fmt.Errorf("%w: accountId 不能为空", errAssignInvalidParams)
+	}
+	if strings.TrimSpace(request.NodeServerBaseURL) == "" {
+		return fmt.Errorf("%w: nodeServerBaseUrl 不能为空", errAssignInvalidParams)
 	}
 	return nil
 }

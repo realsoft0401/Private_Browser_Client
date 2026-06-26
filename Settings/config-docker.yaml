@@ -18,11 +18,15 @@ discovery:
 
 heartbeat:
   enabled: true
+  # 当前正式口径下，节点发现只认 UDP beacon。
+  # heartbeat 必须保留，但它只负责告诉 Node“这台已知 Client 还活着”，不参与发现。
   server_base_url: http://127.0.0.1:3400
   interval_seconds: 15
 
 node_register:
   enabled: true
+  # node_register 用于 bind 成功后由 Node 下发唯一设备身份并写入本地 JSON。
+  # 如果 Client 部署在其它机器，必须改成真实 Node 地址，不能继续沿用 127.0.0.1。
   server_base_url: http://127.0.0.1:3400
   main_account_id: "906090119"
   node_name: ""

@@ -29,9 +29,16 @@ func main() {
 // detectProjectRoot 负责识别项目根目录。
 //
 // 新项目虽然重建了代码，但 `Settings`、`docs`、`public` 仍然是相对项目根目录组织。
-// 因此这里继续保留“从当前目录或可执行文件位置反向找根目录”的做法，
-// 避免后续把相对路径散落到各个服务和路由里。
+// 现在 root 不再依赖 `config-docker.yaml`，而是依赖 `go.mod` / 目录结构，
+// 避免把 yaml 文件重新变成启动必需品。
 func detectProjectRoot() (string, error) {
+	if explicitRoot := os.Getenv("PRIVATE_BROWSER_CLIENT_PROJECT_ROOT"); explicitRoot != "" {
+		if hasProjectMarker(explicitRoot) {
+			return explicitRoot, nil
+		}
+		return "", fmt.Errorf("PRIVATE_BROWSER_CLIENT_PROJECT_ROOT is set but invalid: %s", explicitRoot)
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -45,7 +52,7 @@ func detectProjectRoot() (string, error) {
 	for _, start := range candidates {
 		current := start
 		for {
-			if hasSettingsConfig(current) {
+			if hasProjectMarker(current) {
 				return current, nil
 			}
 
@@ -60,12 +67,31 @@ func detectProjectRoot() (string, error) {
 	return "", fmt.Errorf("project root not found")
 }
 
-// hasSettingsConfig 判断目录是否是当前新 Client 的项目根目录。
+// hasProjectMarker 判断目录是否是当前新 Client 的项目根目录。
 //
-// 这里目前只认 `Settings/config-docker.yaml`，因为当前项目还没有恢复多环境加载逻辑。
-// 后续如果重新引入正式配置加载器，应优先扩展这里，而不是把文件名判断复制到别处。
-func hasSettingsConfig(root string) bool {
-	configPath := filepath.Join(root, "Settings", "config-docker.yaml")
-	stat, statErr := os.Stat(configPath)
-	return statErr == nil && !stat.IsDir()
+// 这里改成认 `go.mod`，因为配置文件现在只是可选项。
+// 后续如果还要扩展，更应该基于模块根目录，而不是继续回看 yaml。
+func hasProjectMarker(root string) bool {
+	root = filepath.Clean(root)
+
+	goModPath := filepath.Join(root, "go.mod")
+	if stat, statErr := os.Stat(goModPath); statErr == nil && !stat.IsDir() {
+		return true
+	}
+
+	// 容器镜像里通常只复制运行所需的 `/app/docs`、`/app/public`、`/app/Settings`、`/app/data`
+	// 和二进制本身，不会带源码树里的 go.mod。
+	// 因此这里必须接受“运行时目录布局”作为根目录判定条件，否则容器永远无法启动。
+	requiredDirs := []string{
+		filepath.Join(root, "docs"),
+		filepath.Join(root, "public"),
+		filepath.Join(root, "data"),
+	}
+	for _, path := range requiredDirs {
+		stat, statErr := os.Stat(path)
+		if statErr != nil || !stat.IsDir() {
+			return false
+		}
+	}
+	return true
 }

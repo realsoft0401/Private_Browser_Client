@@ -10,7 +10,9 @@
 
 - `docs/openapi.yaml`
 - `public/swagger.html`
+- `public/scalar.html`
 - `GET /swagger`
+- `GET /scalar`
 - `GET /openapi.yaml`
 
 ## 3. 后续要求
@@ -23,6 +25,12 @@
 
 - 已实现的正式接口：正常展示
 - 已完成协议收口、待实现的正式接口：继续展示，但描述里要说清当前阶段
+
+补充说明：
+
+- `/swagger` 继续承担研发调试页角色
+- `/scalar` 作为更正式的 API Reference 展示尝试
+- 两个页面都必须共用同一份 `docs/openapi.yaml`
 
 ## 5. SSE 标注规则
 

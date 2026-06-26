@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Private Browser Client API Reference</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #0f172a;
+      }
+
+      .api-target {
+        position: fixed;
+        top: 10px;
+        right: 14px;
+        z-index: 20;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.9);
+        color: #e2e8f0;
+        font:
+          12px/1.4 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.28);
+      }
+
+      .api-target strong {
+        color: #93c5fd;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="api-target">
+      API Target:
+      <strong>http://127.0.0.1:3300</strong>
+    </div>
+    <script
+      id="api-reference"
+      data-url="/openapi.yaml"
+      data-configuration='{
+        "theme": "purple",
+        "layout": "modern",
+        "showSidebar": true,
+        "hideDownloadButton": false,
+        "searchHotKey": "k",
+        "defaultOpenAllTags": false
+      }'
+      src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"
+    ></script>
+  </body>
+</html>

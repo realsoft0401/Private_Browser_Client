@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	Model "private_browser_client/Models/NodeRegister"
 	"private_browser_client/Settings"
 )
 
@@ -69,6 +72,26 @@ func StopHeartbeatPusher() {
 	}
 }
 
+// TriggerHeartbeatNow 允许业务链路在关键时刻主动触发一次即时 heartbeat。
+//
+// 设计来源：
+// - 当前正式规则已经收口成“bind 成功 -> Client 写入 node-registration.json -> Client 开始主动 heartbeat”；
+// - 如果只依赖定时 ticker，Node 侧数据库要等一个周期才会看到最新活性，这会让绑定刚完成时的管理视图显得滞后；
+// - 因此这里提供一个受控即时触发入口，专门给 assign 成功后的链路使用。
+//
+// 职责边界：
+// - 这里只负责“如果心跳器已经启动，就立刻补打一发 heartbeat”；
+// - 不负责启动新的心跳器，不绕过本地 node-registration.json 校验，不改变定时心跳策略。
+func TriggerHeartbeatNow() {
+	heartbeatMu.Lock()
+	instance := heartbeatPusher
+	heartbeatMu.Unlock()
+	if instance == nil {
+		return
+	}
+	instance.pushOnce()
+}
+
 func NewHeartbeatPusher(discoveryConfig *Settings.DiscoveryConfig, heartbeatConfig *Settings.HeartbeatConfig) *HeartbeatPusher {
 	return &HeartbeatPusher{
 		discoveryConfig: discoveryConfig,
@@ -80,7 +103,7 @@ func NewHeartbeatPusher(discoveryConfig *Settings.DiscoveryConfig, heartbeatConf
 }
 
 func (p *HeartbeatPusher) Start() {
-	if p == nil || p.heartbeatConfig == nil || !p.heartbeatConfig.Enabled || strings.TrimSpace(p.heartbeatConfig.ServerBaseURL) == "" {
+	if p == nil || p.heartbeatConfig == nil || !p.heartbeatConfig.Enabled {
 		close(p.doneCh)
 		return
 	}
@@ -126,6 +149,16 @@ func (p *HeartbeatPusher) loop() {
 }
 
 func (p *HeartbeatPusher) pushOnce() {
+	registration, err := loadCachedRegistration()
+	if err != nil {
+		log.Printf("load node registration for heartbeat failed: %v\n", err)
+		return
+	}
+	if registration == nil || strings.TrimSpace(registration.NodeServerBaseURL) == "" {
+		// Node 还没有完成 bind 并写回本地 JSON 时，Client 不应主动向任何地址打心跳。
+		return
+	}
+
 	payload := p.buildPayload()
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -133,7 +166,16 @@ func (p *HeartbeatPusher) pushOnce() {
 		return
 	}
 
-	endpoint := strings.TrimRight(p.heartbeatConfig.ServerBaseURL, "/") + "/api/v1/server/edge-clients/heartbeat"
+	// 这里显式固定为 `/api/v1/edge-clients/heartbeat`。
+	//
+	// 设计来源：
+	// - 这一轮联调已经暴露出一个真实问题：Client 仍在请求历史路径
+	//   `/api/v1/server/edge-clients/heartbeat`，而 Node 当前正式路由已经收口到
+	//   `/api/v1/edge-clients/heartbeat`；
+	// - 结果就是 3300 明明在线、3400 却一直“发现不到”，因为心跳根本没打到真实入口；
+	// - 这条路径必须和 Node 当前路由保持强一致，后续如果 Server 改路由，Client、OpenAPI、
+	//   配置说明和联调文档都必须一起改，不能再只改一边。
+	endpoint := strings.TrimRight(registration.NodeServerBaseURL, "/") + "/api/v1/edge-clients/heartbeat"
 	request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		log.Printf("build node heartbeat request failed, endpoint=%s, err=%v\n", endpoint, err)
@@ -170,5 +212,28 @@ func (p *HeartbeatPusher) DebugEndpoint() string {
 	if p == nil || p.heartbeatConfig == nil {
 		return ""
 	}
-	return fmt.Sprintf("%s/api/v1/server/edge-clients/heartbeat", strings.TrimRight(p.heartbeatConfig.ServerBaseURL, "/"))
+	registration, err := loadCachedRegistration()
+	if err != nil || registration == nil || strings.TrimSpace(registration.NodeServerBaseURL) == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/api/v1/edge-clients/heartbeat", strings.TrimRight(registration.NodeServerBaseURL, "/"))
+}
+
+func loadCachedRegistration() (*Model.RegistrationState, error) {
+	path := filepath.Join(Settings.Conf.ProjectRoot, "data", "node-registration.json")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read node registration cache failed: %w", err)
+	}
+	var state Model.RegistrationState
+	if err = json.Unmarshal(body, &state); err != nil {
+		return nil, fmt.Errorf("decode node registration cache failed: %w", err)
+	}
+	if strings.TrimSpace(state.ClientID) == "" {
+		return nil, nil
+	}
+	return &state, nil
 }

@@ -8,13 +8,15 @@ info:
 
     它不是用户中心、节点管理中心或调度平台，不维护其它 Client 列表，也不自生成中心 clientId。
     文档里出现的 `clientId` 统一表示 Node Server 分配的中心节点身份；Client 侧只允许在受控本机接口里
-    临时展示 Node 返回结果，并允许把上次结果写入本地 JSON 留痕；但这个 JSON 只是缓存，不是正式中心身份，
+    受控展示 Node 返回结果，并允许把上次结果写入本地 JSON 留痕；但这个 JSON 只是缓存，不是正式中心身份，
     更不允许把它当作本机自造设备号。
 
     除 `/health` 外，当前业务接口统一返回 HTTP 200 + JSON `code/message/data` 包装。
 servers:
+  - url: http://127.0.0.1:3300
+    description: 当前本地开发与联调默认 Edge API 服务入口；无论是 Swagger 页还是独立 Scalar 文档容器，默认都应指向这台 3300 服务。
   - url: /
-    description: 当前打开 Swagger 页面的 Edge 服务入口；Try it out 会跟随当前页面 Host。
+    description: 当前打开文档页的同源入口；只作为兜底，不应替代正式联调默认地址 127.0.0.1:3300。
 paths:
   /health:
     get:
@@ -176,7 +178,7 @@ paths:
     get:
       summary: Get node registration status
       description: |
-        过渡期联调/排障接口。
+        当前中心身份写回链路的状态查看接口。
         返回当前 Client 对 Node 暴露的发现摘要，查询 Node 当前是否已存在这台 Client 的中心登记结果，
         并带回本地 JSON 缓存留痕。
         这里返回的本地缓存不是正式业务放行依据，中心 `clientId` 身份真相始终以 Server 为准。
@@ -191,10 +193,10 @@ paths:
     post:
       summary: Accept assigned clientId from node server
       description: |
-        过渡期联调/迁移兼容接口。
-        接收 Node Server 已经完成 bind 后反向下发的中心 clientId/accountId，并写入本地
+        当前 Node bind 成功后写回 Client 唯一设备身份的正式配套接口。
+        接收 Node Server 已经完成 bind 后下发的中心 clientId/accountId，并写入本地
         `data/node-registration.json` 留痕。
-        当前文档保留 `X-Edge-API-Key` 说明，仅用于兼容旧联调链路；这不代表 Client 正式 V1 恢复长期 Edge 内鉴权体系。
+        当前文档保留 `X-Edge-API-Key` 说明，仅用于受控写回，不代表 Client 自注册。
       parameters:
         - name: X-Edge-API-Key
           in: header
@@ -215,6 +217,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponseNodeRegistrationAssign'
+  /api/v1/edge/node-registration/clear:
+    post:
+      summary: Clear local node registration cache after unbind
+      description: |
+        当前 Node unbind 成功后清理 Client 本地身份留痕的正式配套接口。
+
+        当 Node Server 已经完成中心 unbind 后，会调用这条接口删除 Client 本地
+        `data/node-registration.json` 留痕，避免本地继续显示旧的中心身份缓存。
+
+        关键规则：
+        - 只删除本地 JSON 缓存
+        - 不改中心 bind 结果
+        - 不碰 SQLite、slot、browser-env 或任何本机业务资产
+        - 即使本地文件本来就不存在，也按成功收口，并返回 `existed=false`
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 原因：这是一次同步本地文件清理动作，HTTP 返回已足够表达最终结果
+      parameters:
+        - name: X-Edge-API-Key
+          in: header
+          required: true
+          schema:
+            type: string
+          example: private-browser-edge-key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClearNodeRegistrationRequest'
+            examples:
+              default:
+                value:
+                  source: node-unbind
+                  clearedAt: 1782218700
+      responses:
+        '200':
+          description: Clear result response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseNodeRegistrationClear'
   /api/v1/edge/slots:
     get:
       summary: List slots
@@ -739,6 +784,13 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/NodeRegistrationAssignResult'
+    ApiResponseNodeRegistrationClear:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/NodeRegistrationClearResult'
     ApiResponseSlot:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -861,7 +913,7 @@ components:
           example: 0.2.0
         configFile:
           type: string
-          example: /app/Settings/config-docker.yaml
+          example: ""
         dockerApi:
           type: string
           example: http://127.0.0.1:2375
@@ -881,9 +933,20 @@ components:
         arch:
           type: string
           example: amd64
+        cpuCores:
+          type: integer
+          format: int64
+          example: 8
+        memoryTotalMb:
+          type: integer
+          format: int64
+          example: 16384
         dockerApiUrl:
           type: string
           example: http://127.0.0.1:2375
+        dockerVersion:
+          type: string
+          example: "27.5.1"
         discoveryMode:
           type: string
           example: independent-intranet
@@ -1014,6 +1077,18 @@ components:
           type: integer
           format: int64
           example: 1781609100
+    ClearNodeRegistrationRequest:
+      type: object
+      properties:
+        source:
+          type: string
+          description: 本次清理动作来源说明
+          example: node-unbind
+        clearedAt:
+          type: integer
+          format: int64
+          description: 调用方认为本次清理动作发起时间；不传时由 Client 使用当前时间
+          example: 1718500001
     NodeRegistrationAssignResult:
       type: object
       properties:
@@ -1025,6 +1100,26 @@ components:
           example: /Users/lining/Documents/Browser_virtualization/Private_Browser_Client/data/node-registration.json
         registration:
           $ref: '#/components/schemas/NodeRegistrationState'
+    NodeRegistrationClearResult:
+      type: object
+      properties:
+        cleared:
+          type: boolean
+          description: 本次是否已经完成清理收口
+          example: true
+        existed:
+          type: boolean
+          description: 清理前本地缓存文件是否存在
+          example: true
+        cachePath:
+          type: string
+          description: 本地 node-registration.json 路径
+          example: /Users/lining/Documents/Browser_virtualization/Private_Browser_Client/data/node-registration.json
+        clearedAt:
+          type: integer
+          format: int64
+          description: 本次清理结果时间
+          example: 1718500001
     NodeRegistrationStatus:
       type: object
       properties:

@@ -2,10 +2,13 @@ package Edge
 
 // DeviceInfo 是当前新 Client 对外暴露的最小设备信息模型。
 //
-// 当前阶段先保留最小本机事实：
+// 当前阶段保留 Node 探测真正需要的本机事实：
 // - 操作系统
 // - 架构
+// - CPU 核心数
+// - 内存总量
 // - Docker API 地址
+// - Docker 版本
 // - 发现模式
 //
 // 后续真正接入 Docker 探测后，再在这个模型里补更多本机能力摘要。
@@ -17,6 +20,9 @@ package Edge
 type DeviceInfo struct {
 	OS            string `json:"os"`
 	DeviceArch    string `json:"arch"`
+	CPUCores      int64  `json:"cpuCores"`
+	MemoryTotalMB int64  `json:"memoryTotalMb"`
 	DockerAPIURL  string `json:"dockerApiUrl"`
+	DockerVersion string `json:"dockerVersion"`
 	DiscoveryMode string `json:"discoveryMode"`
 }

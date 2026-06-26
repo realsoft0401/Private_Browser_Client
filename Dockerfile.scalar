@@ -1,0 +1,13 @@
+# 这份镜像不是 Client 运行服务本身，而是把当前 OpenAPI 文档单独打成 Scalar 文档容器。
+#
+# 设计来源：
+# - 你已经提出后期想尝试更企业级的 API 展示方式；
+# - 当前仓库里 `docs/openapi.yaml` 已经是正式协议事实源，不应该再为文档容器复制第二份接口定义；
+# - 因此这里单独做一个“只负责展示文档”的轻量镜像，让 Client 服务镜像和 API 文档镜像彻底解耦。
+FROM nginx:1.27-alpine
+
+COPY public/scalar.html /usr/share/nginx/html/index.html
+COPY docs/openapi.yaml /usr/share/nginx/html/openapi.yaml
+COPY docker/scalar/nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 8080

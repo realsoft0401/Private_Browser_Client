@@ -7,7 +7,7 @@
 ## 业务边界
 
 - 只返回 Edge 本机事实
-- 当前只返回 `os/deviceArch/dockerApiUrl/discoveryMode`
+- 当前返回 `os/arch/cpuCores/memoryTotalMb/dockerApiUrl/dockerVersion/discoveryMode`
 - 不返回中心 `clientId`
 - 不返回用户、包状态、代理、登录态或敏感资产内容
 
@@ -35,8 +35,11 @@ GET /api/v1/edge/device-info
   "message": "success",
   "data": {
     "os": "linux",
-    "deviceArch": "arm64",
+    "arch": "arm64",
+    "cpuCores": 8,
+    "memoryTotalMb": 16384,
     "dockerApiUrl": "http://127.0.0.1:2375",
+    "dockerVersion": "27.5.1",
     "discoveryMode": "independent-intranet"
   }
 }
@@ -64,10 +67,14 @@ GET /api/v1/edge/device-info
 
 - `action=get-device-info`
 - `os`
-- `deviceArch`
+- `arch`
+- `cpuCores`
+- `memoryTotalMb`
 - `dockerApiUrl`
+- `dockerVersion`
 
 ## 联调验收标准
 
 - Docker API 若配置为回环地址或泛监听地址，返回值应被改写成 Node 可理解的 `clientIp:2375`
+- `cpuCores / memoryTotalMb / dockerVersion` 不能再长期为空，否则 Node 中心库设备摘要不完整
 - 响应里不能出现 `clientId`

@@ -23,7 +23,7 @@
 
 - `clientId` 是 Server 中心节点身份，不是 Client 本机资源 ID
 - Client 不应要求正式 Edge API 请求携带 `clientId`
-- 如果当前保留 `node-registration` 相关接口，也只作为过渡期联调与留痕能力
+- `node-registration` 相关接口负责 bind 成功后的中心身份写回与本地留痕，但不参与 discovery，不替代节点健康与业务放行判断
 
 ## 2. UDP 自动发现边界
 

@@ -153,7 +153,7 @@ func buildSlotContainerName(slotID string, prefix string) string {
 }
 
 func currentRuntimeConfig() (*Settings.SlotRuntimeConfig, bool) {
-	if Settings.Conf == nil || Settings.Conf.ConfigFile == "" {
+	if Settings.Conf == nil {
 		return nil, false
 	}
 	if Settings.Conf.SlotRuntimeConfig == nil {

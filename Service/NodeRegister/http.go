@@ -50,3 +50,29 @@ func Assign(ctx *gin.Context) {
 	}
 	HttpResponse.ResponseSuccess(ctx, result)
 }
+
+// Clear 接收 Node Server 的解绑收口请求，并删除本地 node-registration.json 留痕。
+//
+// 设计来源：
+// - 当前第一阶段虽然把 node-registration 视为过渡兼容链路，但解绑后仍要求 Client 清理本地缓存；
+// - 因此这里保留一条受控删除入口，避免 Node 只能“中心解除归属成功，但本地缓存永远残留”；
+// - 这条接口只删除本地 JSON，不反向改中心 bind 结果。
+func Clear(ctx *gin.Context) {
+	var request Model.ClearRequest
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		HttpResponse.ResponseErrorWithMsg(ctx, HttpResponse.CodeInvalidParams, "clear node registration failed: request body 非法")
+		return
+	}
+	requestCtx, cancel := context.WithTimeout(ctx.Request.Context(), 10*time.Second)
+	defer cancel()
+	result, err := NewService().ClearClientID(requestCtx, ctx.GetHeader("X-Edge-API-Key"), request)
+	if err != nil {
+		code := HttpResponse.CodeRemoteError
+		if isAssignUnauthorized(err) {
+			code = HttpResponse.CodeUnauthorized
+		}
+		HttpResponse.ResponseErrorWithMsg(ctx, code, fmt.Sprintf("clear node registration failed: %s", err.Error()))
+		return
+	}
+	HttpResponse.ResponseSuccess(ctx, result)
+}

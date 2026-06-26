@@ -3,6 +3,7 @@ package Settings
 import (
 	"fmt"
 	"path/filepath"
+	"os"
 	"strings"
 
 	"github.com/fsnotify/fsnotify"
@@ -10,10 +11,11 @@ import (
 )
 
 var (
-	// ConfigFileName 是当前新 Client 唯一允许读取的配置文件。
+	// ConfigFileName 保留为旧测试/兼容常量，但不再是 Client 启动必需项。
 	//
-	// 这次重建后，项目先按单一 `config-docker.yaml` 口径推进，
-	// 避免在新项目最早期又把 dev/test/prod 多套模式带回来。
+	// 这次改造后，Client 的正式启动方式是“默认值 + 环境变量覆盖”。
+	// 如果项目目录里恰好还有这个文件，Settings.Init 仍然可以读取；
+	// 但缺少它不应再阻塞启动。
 	ConfigFileName = "config-docker.yaml"
 
 	// Conf 持有当前服务进程的全局配置。
@@ -79,23 +81,28 @@ type DiscoveryConfig struct {
 	AdvertiseBaseURL string `mapstructure:"advertise_base_url"`
 }
 
-// HeartbeatConfig 描述 Client 主动向 Node Server 上报 discovery 心跳的参数。
+// HeartbeatConfig 描述 Client -> Node Server 的 HTTP 活性心跳配置。
 //
 // 设计来源：
-// - 3400 Node Server 当前除了 UDP 自动发现，还已经提供正式心跳入口 `/api/v1/server/edge-clients/heartbeat`；
-// - 用户希望本地把 3300 Client 起起来后，能直接在 Node Server 上看到发现与后续 clientId 分配链路；
-// - 因此这里补一条“Client 主动上报”的正式链路，但它仍然只上传 discovery 域最小摘要，不上传业务资产。
+// - 当前正式口径已经收紧为“UDP 只负责发现，heartbeat 只负责证明服务仍然存在”；
+// - 因此这组配置必须继续保留，而且默认应可用，但绝不能再被理解成 discovery 入口；
+// - Node 侧收到 heartbeat 后只能更新已知节点的活性摘要，不能凭 heartbeat 新建 discovered 或正式绑定。
+//
+// 维护约束：
+// - `ServerBaseURL` 只表示 Node Server 的基地址，不包含 path；
+// - 这组配置负责服务存在性回执，不负责 clientId 分配，不负责 bind；
+// - 跨机部署时必须填写真实 Node 内网地址，不能把 `127.0.0.1:3400` 当成跨机器通用模板。
 type HeartbeatConfig struct {
 	Enabled         bool   `mapstructure:"enabled"`
 	ServerBaseURL   string `mapstructure:"server_base_url"`
 	IntervalSeconds int    `mapstructure:"interval_seconds"`
 }
 
-// NodeRegisterConfig 描述 Client 与 3400 Node Server 的中心登记协同参数。
+// NodeRegisterConfig 描述 Client 与 Node Server 的中心登记协同参数。
 //
 // 设计来源：
-// - 最新正式链路已经收口为“Node 发起 bind，Client 只查询结果并接收 assign”；
-// - 因此这里不再保留 Client 主动注册 Node 的参数，只保留状态查询和 assign 所需的最小配置；
+// - 最新正式链路已经收口为“Node 发起 bind，Client 接收 assign，并本地留存 node-registration.json”；
+// - node_register 不参与 discovery，但仍是中心唯一设备身份写入 Client 的正式能力；
 // - 中心身份仍由 Node Server 生成，Client 不自行发号。
 type NodeRegisterConfig struct {
 	Enabled       bool   `mapstructure:"enabled"`
@@ -130,18 +137,13 @@ type SlotRuntimeConfig struct {
 	HostVNCBasePort      int      `mapstructure:"host_vnc_base_port"`
 }
 
-// Init 负责加载当前部署配置文件。
+// Init 负责加载当前部署配置。
 //
 // 这里继续沿用 old 架构的配置入口方式：
 // main -> Infrastructures.Init -> Settings.Init
 // 这样后续 Discovery、Health、Routes、Edge 都继续通过 `Settings.Conf` 取值。
 func Init(projectRoot string) error {
-	configFile := filepath.Join(projectRoot, "Settings", ConfigFileName)
-
 	configEngine = viper.New()
-	configEngine.SetConfigFile(configFile)
-	configEngine.SetConfigType("yaml")
-
 	configEngine.SetDefault("name", "private-browser-client")
 	configEngine.SetDefault("mode", "production")
 	configEngine.SetDefault("version", "0.2.0")
@@ -160,7 +162,7 @@ func Init(projectRoot string) error {
 	configEngine.SetDefault("heartbeat.enabled", true)
 	configEngine.SetDefault("heartbeat.server_base_url", "http://127.0.0.1:3400")
 	configEngine.SetDefault("heartbeat.interval_seconds", 15)
-	configEngine.SetDefault("node_register.enabled", false)
+	configEngine.SetDefault("node_register.enabled", true)
 	configEngine.SetDefault("node_register.server_base_url", "http://127.0.0.1:3400")
 	configEngine.SetDefault("node_register.main_account_id", "")
 	configEngine.SetDefault("node_register.node_name", "")
@@ -178,15 +180,26 @@ func Init(projectRoot string) error {
 	configEngine.SetDefault("slot_runtime.host_cdp_base_port", 9200)
 	configEngine.SetDefault("slot_runtime.host_vnc_base_port", 9100)
 
-	if err := configEngine.ReadInConfig(); err != nil {
-		return fmt.Errorf("read config failed: %w", err)
+	configEngine.SetEnvPrefix("PRIVATE_BROWSER_CLIENT")
+	configEngine.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	configEngine.AutomaticEnv()
+
+	configFile := filepath.Join(projectRoot, "Settings", ConfigFileName)
+	if _, err := os.Stat(configFile); err == nil {
+		configEngine.SetConfigFile(configFile)
+		configEngine.SetConfigType("yaml")
+		if err := configEngine.ReadInConfig(); err != nil {
+			return fmt.Errorf("read config failed: %w", err)
+		}
 	}
 	if err := configEngine.Unmarshal(Conf); err != nil {
 		return fmt.Errorf("unmarshal config failed: %w", err)
 	}
 
 	Conf.ProjectRoot = projectRoot
-	Conf.ConfigFile = configFile
+	if _, err := os.Stat(configFile); err == nil {
+		Conf.ConfigFile = configFile
+	}
 	Conf.Env = "docker"
 	normalizeRuntimeMode(Conf)
 	if Conf.ServerConfig == nil {
@@ -217,47 +230,49 @@ func Init(projectRoot string) error {
 	normalizeSwaggerConfig(Conf.SwaggerConfig)
 	normalizeSlotRuntimeConfig(Conf.SlotRuntimeConfig)
 
-	configEngine.WatchConfig()
-	configEngine.OnConfigChange(func(event fsnotify.Event) {
-		updated := new(AppConfig)
-		if err := configEngine.Unmarshal(updated); err != nil {
-			fmt.Printf("reload config failed, err:%v\n", err)
-			return
-		}
-		updated.ProjectRoot = projectRoot
-		updated.ConfigFile = configFile
-		updated.Env = "docker"
-		normalizeRuntimeMode(updated)
-		if updated.ServerConfig == nil {
-			updated.ServerConfig = &ServerConfig{}
-		}
-		if updated.DockerConfig == nil {
-			updated.DockerConfig = &DockerConfig{}
-		}
-		if updated.DiscoveryConfig == nil {
-			updated.DiscoveryConfig = &DiscoveryConfig{}
-		}
-		if updated.HeartbeatConfig == nil {
-			updated.HeartbeatConfig = &HeartbeatConfig{}
-		}
-		if updated.NodeRegisterConfig == nil {
-			updated.NodeRegisterConfig = &NodeRegisterConfig{}
-		}
-		if updated.SwaggerConfig == nil {
-			updated.SwaggerConfig = &SwaggerConfig{}
-		}
-		if updated.SlotRuntimeConfig == nil {
-			updated.SlotRuntimeConfig = &SlotRuntimeConfig{}
-		}
-		normalizeServerConfig(updated.ServerConfig)
-		normalizeDiscoveryConfig(updated.DiscoveryConfig)
-		normalizeHeartbeatConfig(updated.HeartbeatConfig)
-		normalizeNodeRegisterConfig(updated.NodeRegisterConfig)
-		normalizeSwaggerConfig(updated.SwaggerConfig)
-		normalizeSlotRuntimeConfig(updated.SlotRuntimeConfig)
-		Conf = updated
-		fmt.Printf("config reloaded: %s\n", event.Name)
-	})
+	if configEngine.ConfigFileUsed() != "" {
+		configEngine.WatchConfig()
+		configEngine.OnConfigChange(func(event fsnotify.Event) {
+			updated := new(AppConfig)
+			if err := configEngine.Unmarshal(updated); err != nil {
+				fmt.Printf("reload config failed, err:%v\n", err)
+				return
+			}
+			updated.ProjectRoot = projectRoot
+			updated.ConfigFile = configFile
+			updated.Env = "docker"
+			normalizeRuntimeMode(updated)
+			if updated.ServerConfig == nil {
+				updated.ServerConfig = &ServerConfig{}
+			}
+			if updated.DockerConfig == nil {
+				updated.DockerConfig = &DockerConfig{}
+			}
+			if updated.DiscoveryConfig == nil {
+				updated.DiscoveryConfig = &DiscoveryConfig{}
+			}
+			if updated.HeartbeatConfig == nil {
+				updated.HeartbeatConfig = &HeartbeatConfig{}
+			}
+			if updated.NodeRegisterConfig == nil {
+				updated.NodeRegisterConfig = &NodeRegisterConfig{}
+			}
+			if updated.SwaggerConfig == nil {
+				updated.SwaggerConfig = &SwaggerConfig{}
+			}
+			if updated.SlotRuntimeConfig == nil {
+				updated.SlotRuntimeConfig = &SlotRuntimeConfig{}
+			}
+			normalizeServerConfig(updated.ServerConfig)
+			normalizeDiscoveryConfig(updated.DiscoveryConfig)
+			normalizeHeartbeatConfig(updated.HeartbeatConfig)
+			normalizeNodeRegisterConfig(updated.NodeRegisterConfig)
+			normalizeSwaggerConfig(updated.SwaggerConfig)
+			normalizeSlotRuntimeConfig(updated.SlotRuntimeConfig)
+			Conf = updated
+			fmt.Printf("config reloaded: %s\n", event.Name)
+		})
+	}
 
 	return nil
 }

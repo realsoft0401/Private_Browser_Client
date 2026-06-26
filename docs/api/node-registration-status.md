@@ -4,12 +4,12 @@
 
 返回当前 Client 的 Node 登记协同状态视图。
 
-> 当前文档定位：这是过渡期联调/排障视图，不是 `Private_Browser_Client` 长期正式业务主接口。
+> 当前文档定位：这是中心身份写回链路的状态视图接口，用于查看本地留痕与 Node 查询结果；它不参与 discovery，也不直接承担业务放行。
 
 ## 业务边界
 
 - 负责回显当前 Client 对 Node 暴露的 `baseUrl/clientIp/dockerApiUrl`
-- 负责在过渡期联调时查询 Node 当前是否已存在这台 Client 的中心登记结果
+- 负责查询 Node 当前是否已存在这台 Client 的中心登记结果
 - 负责同时回显本地 `node-registration.json` 缓存留痕
 - 不负责主动注册 Node
 - 不负责中心 bind 判定
@@ -97,7 +97,7 @@ Node 未找到：
 
 ## 口径说明
 
-- 本接口返回的 `registered/cacheStatus/registration` 只用于联调与排障
+- 本接口返回的 `registered/cacheStatus/registration` 只用于状态查看
 - 不能把“Client 能看到本地缓存 `clientId`”理解成节点已完成正式中心绑定
 - 正式业务放行仍应由 Server 基于 `health_status + discovery_status + clientId + run quota` 判断
 

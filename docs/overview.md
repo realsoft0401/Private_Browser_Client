@@ -15,7 +15,7 @@
 
 - `browser-envs/*` 是正式业务生命周期入口
 - `slots/*` 是 Client 本机资源层与运维层
-- `node-registration/*` 如果保留，只作为过渡期联调/排障接口，不参与正式业务放行
+- `node-registration/*` 是当前 bind 成功后的正式写回与本地留痕接口，但它不参与 discovery，也不直接决定业务放行
 - 中心 `clientId` 身份、节点归属和 run 准入都由 `Private_Browser_Server` 负责
 
 ## 当前文档口径

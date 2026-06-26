@@ -58,6 +58,14 @@ func TestCoreHTTPEntrypoints(t *testing.T) {
 		}
 	})
 
+	t.Run("scalar page", func(t *testing.T) {
+		recorder := performRequest(router, http.MethodGet, "/scalar", nil, nil)
+		assertStatusCode(t, recorder.Code, http.StatusOK)
+		if !strings.Contains(recorder.Body.String(), "@scalar/api-reference") {
+			t.Fatalf("scalar page missing scalar marker")
+		}
+	})
+
 	t.Run("openapi yaml", func(t *testing.T) {
 		recorder := performRequest(router, http.MethodGet, "/openapi.yaml", nil, nil)
 		assertStatusCode(t, recorder.Code, http.StatusOK)

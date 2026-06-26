@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"private_browser_client/Routes"
 	SQLiteInfra "private_browser_client/Infrastructures/SQLite"
+	"private_browser_client/Routes"
 	DiscoveryService "private_browser_client/Service/Discovery"
 	"private_browser_client/Settings"
 )
@@ -103,8 +103,8 @@ func waitForShutdownSignal() {
 }
 
 func shutdownHTTPServer(server *http.Server) error {
-	DiscoveryService.StopHeartbeatPusher()
 	DiscoveryService.StopBroadcaster()
+	DiscoveryService.StopHeartbeatPusher()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {

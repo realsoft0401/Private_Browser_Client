@@ -16,7 +16,7 @@
 
 - `browser-envs/*` 是正式业务主线
 - `slots/*` 是本机资源层
-- `node-registration/*` 只作为过渡期联调/排障接口保留，不参与正式业务放行
+- `node-registration/*` 是当前 bind 成功后写回中心唯一设备身份的正式配套接口，但不参与 discovery，也不直接承担业务放行
 
 ## 实现状态总表
 
@@ -44,11 +44,12 @@ Node 登记协同：
 
 - [node-registration-status.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/node-registration-status.md)
 - [node-registration-assign.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/node-registration-assign.md)
+- [node-registration-clear.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/node-registration-clear.md)
 
 这里再次强调：
 
 - 这组接口不是长期正式业务主入口
-- 它们的作用是过渡期联调、排障和留痕
+- 它们的作用是中心身份写回、本地留痕与联调排障
 
 Slot 资源位：
 

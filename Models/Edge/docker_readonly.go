@@ -57,6 +57,11 @@ type DockerEngineInfoResponse struct {
 	Containers int64 `json:"Containers"`
 }
 
+// DockerEngineVersionResponse 对应 Docker `/version` 的最小读取模型。
+type DockerEngineVersionResponse struct {
+	Version string `json:"Version"`
+}
+
 // DockerEngineImageResponse 对应 Docker `/images/json` 的最小读取模型。
 type DockerEngineImageResponse struct {
 	ID          string   `json:"Id"`

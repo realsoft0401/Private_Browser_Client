@@ -38,7 +38,7 @@
 - Client 不生成 `clientId`
 - Client 不以 `clientId` 作为本机正式 API 输入
 - `clientId` 是 `Private_Browser_Server` 的中心身份字段，不是 Edge 本机资源标识
-- 后续如果保留 `node-registration` 相关接口，也只作为过渡期联调/排障留痕能力，不作为正式业务主链路
+- `node-registration/*` 是当前 Node bind 成功后把中心唯一设备身份写回 Client 的正式配套能力，但它不参与 UDP discovery，也不承担业务放行判断
 
 ## UDP 自动发现边界
 
@@ -69,6 +69,91 @@ Client 后期需要支持 UDP discovery / beacon，用于在独立内网中让 S
 - `docs/openapi.yaml`
 - `public/swagger.html`
 
+当前也额外提供一条更正式的 API Reference 展示尝试：
+
+- `public/scalar.html`
+- `/scalar`
+
+当前 `Scalar` 展示页的 Client Libraries 口径只保留：
+
+- Python
+- Go
+- Java
+- PHP
+
+如果要把当前 OpenAPI 单独打成 `Scalar` 文档容器，可直接使用：
+
+```bash
+cd /Users/lining/Documents/Browser_virtualization/Private_Browser_Client
+docker build -f Dockerfile.scalar -t private-browser-client-scalar:latest .
+docker run --rm -p 13300:8080 private-browser-client-scalar:latest
+```
+
+访问地址：
+
+```text
+http://127.0.0.1:13300/
+```
+
+## Client 镜像构建
+
+当前仓库已经补齐正式 `Client` 业务镜像 Dockerfile，统一构建入口脚本是：
+
+```bash
+cd /Users/lining/Documents/Browser_virtualization/Private_Browser_Client
+./scripts/build-client-image.sh
+```
+
+## 运行方式
+
+现在 Client 不再依赖外部挂载 `config-docker.yaml`。先启动 Client，让它在局域网里发 UDP beacon；Node 发现后再 bind 并回写本地 JSON。
+
+示例：
+
+```bash
+docker run -d \
+  --name private-browser-client \
+  --restart always \
+  --network host \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /Business/data:/app/data \
+  crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge_server:0.1.10-amd64
+```
+
+如果后面 Node 已经发现并完成 bind，再由 Node 回写本地 `node-registration.json`；这一步不需要在 Client 启动命令里预先塞 Node 地址。
+
+默认行为：
+
+- 默认构建 `linux/amd64`
+- 默认镜像名 `private-browser-client:latest`
+- 默认使用 `--load` 装回本机 Docker
+- 默认使用国内镜像入口、Debian 源和 Go 代理
+
+常用示例：
+
+```bash
+cd /Users/lining/Documents/Browser_virtualization/Private_Browser_Client
+./scripts/build-client-image.sh --platform linux/amd64 --image private-browser-client --tag amd64
+./scripts/build-client-image.sh --platform linux/arm64 --image private-browser-client --tag arm64
+./scripts/build-client-image.sh --platform linux/amd64 --image repo/private-browser-client --tag 0.2.0 --push
+```
+
+如果后续海外 CI 或客户环境直连官方源更稳定，可覆盖：
+
+```bash
+DOCKERHUB_MIRROR=docker.io \
+DEBIAN_MIRROR=deb.debian.org \
+GOPROXY=https://proxy.golang.org,direct \
+GOSUMDB=sum.golang.org \
+./scripts/build-client-image.sh --platform linux/amd64 --image private-browser-client --tag amd64
+```
+
+这里必须注意区分：
+
+- `13300` 是独立 `Scalar` 文档页端口
+- `3300` 仍然是 `Private_Browser_Client` 的真实 API 服务地址
+- 文档页即使跑在 `13300`，页面里默认理解的 API 目标仍应是 `http://127.0.0.1:3300`
+
 ## WebVNC 边界
 
 新的 `WebVNC` 不再围绕 `package/envId`，而是围绕 `slot`。
@@ -98,3 +183,24 @@ Client 后期需要支持 UDP discovery / beacon，用于在独立内网中让 S
 - 是否能看到真实桌面画面，还取决于当前 `slot runtime` 镜像内部是否真的提供 VNC 服务和浏览器桌面
 - 如果当前 `slot runtime` 只是占位容器，例如 `alpine + sleep infinity`，则页面仍可访问，但不会出现真实浏览器画面
 - 不再继续沿用 old 的 `web-vnc.html?envId=...` 视角
+
+cd /Users/lining/Documents/Browser_virtualization/Private_Browser_Client
+DEBIAN_MIRROR=deb.debian.org \
+./scripts/build-client-image.sh \
+  --platform linux/amd64 \
+  --image crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge_server \
+  --tag 0.1.10-amd64 \
+  --push
+
+
+docker run -d \
+  --name private-browser-client \
+  --restart always \
+  --network host \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /Business/Settings:/app/Settings \
+  -v /Business/data:/app/data \
+  crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge_server:0.1.10-amd64
+
+
+  

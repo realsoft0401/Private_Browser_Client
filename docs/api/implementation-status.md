@@ -13,6 +13,7 @@
 - `GET /api/v1/edge/device-info`
 - `GET /api/v1/edge/node-registration`
 - `POST /api/v1/edge/node-registration/assign`
+- `POST /api/v1/edge/node-registration/clear`
 - `GET /api/v1/edge/slots`
 - `POST /api/v1/edge/slots`
 - `GET /api/v1/edge/slots/{slotId}`

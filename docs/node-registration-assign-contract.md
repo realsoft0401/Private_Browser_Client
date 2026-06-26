@@ -2,17 +2,18 @@
 
 ## 1. 文档目标
 
-这份文档只服务当前 `Client <-> Node Server` 的第一阶段绑定协同：
+这份文档只服务当前 `Client <-> Node Server` 的绑定协同：
 
 ```text
 Node 发现 Client
   -> Node bind 生成 clientId
   -> Node 下发 clientId 给 Client
   -> Client 写入本地 node-registration.json
+  -> Client 开始主动 heartbeat 给 Node
 ```
 
 > 文档定位说明：
-> 这是过渡期联调/迁移兼容协议，不是 `Private_Browser_Client` 的长期正式业务主链路。
+> 这是正式的中心身份写回配套协议：发现和绑定归 Node，留痕归 Client。
 > 最新总口径下，中心 `clientId` 身份真相、节点归属和业务放行判断始终属于 `Private_Browser_Server`。
 
 它不讨论：
@@ -60,29 +61,30 @@ Client 不能：
 
 ## 3. Client 需要提供的接口
 
-第一阶段建议 Client 只配合两个接口：
+Client 只配合两个接口：
 
 ### 3.1 `GET /api/v1/edge/node-registration`
 
 作用：
 
-- 回显当前 Node 注册相关配置
 - 回显本地 JSON 缓存
-- 回显实时远端查询结果
+- 回显当前 Node 下发后的留痕结果
+- 回显当前是否已经形成绑定关系
 
 ### 3.2 `POST /api/v1/edge/node-registration/assign`
 
 作用：
 
-- 专门接收 Node Server 下发的 `clientId`
+- 专门接收 Node Server 在 bind 成功后下发的 `clientId`
 - 把结果写入本地 `data/node-registration.json`
+- 写回成功后，Client 必须开始主动 heartbeat
 
 注意：
 
 - 这不是 Client 自注册接口
 - 这不是 discovered 接口
 - 这是“中心已决定，边缘留痕”的受控赋值接口
-- 它只用于过渡期联调兼容，不应被理解成长期正式中心身份同步协议
+- 它只用于正式 bind 后的中心身份写回，不应被理解成 Client 自己发号
 
 ## 4. assign 接口定义
 
@@ -94,7 +96,7 @@ Client 不能：
 
 ### 4.2 负责什么
 
-- 在过渡期兼容旧链路时校验 `X-Edge-API-Key`
+- 校验 `X-Edge-API-Key`
 - 校验请求字段
 - 写入本地 `data/node-registration.json`
 - 返回当前本地缓存结果
@@ -122,15 +124,9 @@ Client 必须：
 
 这样做的原因是：
 
-- Node -> Client 正式受控调用继续共用一套老口径
+- Node -> Client 的写回动作必须有明确的受控入口
 - assign 不会变成一条单独裸露的改文件接口
 - 后续 bind/push/其他 Edge 动作的安全边界一致
-
-但这里必须额外说明：
-
-- 这只是当前过渡期兼容 old 联调链路的临时收口
-- 它不代表 `Private_Browser_Client` 正式 V1 已恢复长期 Edge API Key 鉴权体系
-- 如果后续总口径继续坚持“内网受信 + 上游访问控制，不做 Edge 内鉴权”，这条校验链路应继续降级或移除
 
 ## 5. 请求体建议
 
@@ -195,8 +191,23 @@ Private_Browser_Client/data/node-registration.json
   - 记录下发时这台 Client 的本机事实，便于重启后排障
 - `source`
   - 区分是 bind 直接下发，还是后续补推
-- `registeredAt/updatedAt`
+ - `registeredAt/updatedAt`
   - 记录首次与最近一次写入时间
+
+## 7. heartbeat 触发规则
+
+当 `assign` 成功并且本地 JSON 写入完成后，Client 必须开始主动向 Node Server 发送 heartbeat。
+
+heartbeat 的职责只有两个：
+
+1. 证明当前 Client 仍在线
+2. 让 Node 侧更新节点活性摘要
+
+heartbeat 不负责：
+
+- 重新生成 `clientId`
+- 重新绑定账号
+- 替代 UDP discovery
 
 ## 7. 写入规则
 
