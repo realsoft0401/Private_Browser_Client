@@ -50,3 +50,12 @@
 
 - `slot` 是运行承载位，不是正式业务资产
 - 正式业务生命周期主入口仍然是 `browser-envs/*`
+
+## 5. 镜像版本边界
+
+- `slot_runtime.image` 是 Client 当前“新建 slot / 显式 reinit slot”使用的默认基础镜像。
+- `browser-env runtime.image` 是某个环境包正式运行时使用的业务运行镜像。
+- 修改默认 `slot_runtime.image` 只影响后续新建 slot 或显式 reinit 后的 slot。
+- 已存在 slot 必须保留自己当前实际 `runtimeImage`，不能因为默认值更新自动漂移。
+- 老 slot 升级基础镜像必须走显式重初始化链路，成功后仍视为原 slot 恢复 `waiting`。
+- browser-env 的 `runtime.image` 不能因为 slot 默认镜像变化被自动改写。

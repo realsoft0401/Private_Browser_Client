@@ -6,8 +6,8 @@
 
 ## 2. 推荐入口
 
-- `/web-vnc.html?slot=1`
-- `/web-vnc.html?slot=2`
+- `/web-vnc.html?slot=slot001`
+- `/web-vnc.html?slot=slot002`
 
 ## 3. 语义
 
@@ -19,8 +19,8 @@
 
 - `waiting`：当前没有运行实例
 - `loading`：暂不视为稳定可连接
-- `occupied`：可作为正常查看态
-- `releasing`：不再视为稳定可连接
+- `running`：可作为正常查看态
+- `ending`：不再视为稳定可连接
 
 ## 5. 设计原则
 

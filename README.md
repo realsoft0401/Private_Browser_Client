@@ -160,8 +160,7 @@ GOSUMDB=sum.golang.org \
 
 也就是后续入口口径应按下面这类方式统一：
 
-- `/web-vnc.html?slot=1`
-- `/web-vnc.html?slot=2`
+- `/web-vnc.html?slot=slot001`
 
 它表达的是：
 
@@ -183,6 +182,25 @@ GOSUMDB=sum.golang.org \
 - 是否能看到真实桌面画面，还取决于当前 `slot runtime` 镜像内部是否真的提供 VNC 服务和浏览器桌面
 - 如果当前 `slot runtime` 只是占位容器，例如 `alpine + sleep infinity`，则页面仍可访问，但不会出现真实浏览器画面
 - 不再继续沿用 old 的 `web-vnc.html?envId=...` 视角
+
+## 镜像版本边界
+
+当前必须区分两类镜像：
+
+- `slot runtime` 基础镜像
+  - 由 `slot_runtime.image` 提供默认值
+  - 只影响后续新建 slot 或显式 `reinit-slot`
+- `browser-env` 正式运行镜像
+  - 由环境包自己的 `runtime.image` 决定
+  - 才是某个账号环境真正运行时使用的镜像事实
+
+当前正式规则：
+
+- 修改默认 `slot_runtime.image`，不会自动升级已有 slot
+- 已存在 slot 必须保留自己的当前实际 `runtimeImage`
+- 老 slot 想从 `1.1` 升到 `1.2`，必须走显式重初始化
+- 重初始化成功后仍是原 slot 恢复 `waiting`，不是生成新 slot
+- browser-env 的正式运行镜像也必须显式修改，不能被 slot 默认值偷偷带着变化
 
 cd /Users/lining/Documents/Browser_virtualization/Private_Browser_Client
 DEBIAN_MIRROR=deb.debian.org \

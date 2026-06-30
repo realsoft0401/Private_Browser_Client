@@ -2,8 +2,8 @@ package Settings
 
 import (
 	"fmt"
-	"path/filepath"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/fsnotify/fsnotify"

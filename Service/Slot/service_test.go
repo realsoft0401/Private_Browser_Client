@@ -1,6 +1,7 @@
 package Slot
 
 import (
+	"fmt"
 	"testing"
 
 	model "private_browser_client/Models/Slot"
@@ -108,6 +109,24 @@ func TestGetSlotCDPInfo(t *testing.T) {
 	}
 }
 
+func TestDeleteSlotTreatsMissingContainerAsSuccess(t *testing.T) {
+	slotRuntimeService.SetInitializer(fakeMissingContainerInitializer{})
+	defer slotRuntimeService.SetInitializer(nil)
+
+	service := NewService()
+	slotID := "slot305"
+
+	if _, err := service.CreateSlot(slotID); err != nil {
+		t.Fatalf("CreateSlot() error = %v", err)
+	}
+	if err := service.DeleteSlotByID(slotID); err != nil {
+		t.Fatalf("DeleteSlotByID() error = %v, want success when container already missing", err)
+	}
+	if _, err := service.GetSlotByID(slotID); err == nil {
+		t.Fatalf("GetSlotByID() error = nil, want slot deleted")
+	}
+}
+
 type fakeSlotInitializer struct{}
 
 func (f fakeSlotInitializer) Initialize(slot *model.Slot) error {
@@ -127,6 +146,21 @@ func (f fakeSlotInitializer) Destroy(slot *model.Slot) error {
 }
 
 func (f fakeSlotInitializer) Reinitialize(slot *model.Slot) error {
+	return f.Initialize(slot)
+}
+
+type fakeMissingContainerInitializer struct{}
+
+func (f fakeMissingContainerInitializer) Initialize(slot *model.Slot) error {
+	return fakeSlotInitializer{}.Initialize(slot)
+}
+
+func (f fakeMissingContainerInitializer) Destroy(slot *model.Slot) error {
+	_ = slot
+	return fmt.Errorf("docker api remove container failed: status=404 body={\"message\":\"No such container: fake-container-id\"}")
+}
+
+func (f fakeMissingContainerInitializer) Reinitialize(slot *model.Slot) error {
 	return f.Initialize(slot)
 }
 

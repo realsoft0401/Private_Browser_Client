@@ -128,6 +128,22 @@ func (d *DockerInitializer) Destroy(slot *slotModel.Slot) error {
 
 	edge := edgeService.NewEdgeService()
 	if err := edge.RemoveDockerContainer(*slot.ContainerID, true); err != nil {
+		// 这里把“容器已经不存在”收口为可接受成功。
+		//
+		// 设计来源：
+		// - destroy-slot / reinit-slot 的目标是把 slot 当前资源清干净；
+		// - 如果 Docker 里的容器早就被手工删掉或异常消失，继续返回 404 只会挡住 slot 清理；
+		// - 用户已经明确要求：镜像/容器不在时，也应允许 slot 删除继续成功。
+		//
+		// 职责边界：
+		// - 这里只豁免 “No such container” 这类受控 missing 事实；
+		// - 其它 Docker 删除错误仍然必须原样返回，避免把权限、网络或 Docker API 故障伪装成成功。
+		if isContainerAlreadyMissing(err) {
+			slot.ContainerStatus = optionalString("removed")
+			slot.ContainerID = nil
+			slot.ContainerName = nil
+			return nil
+		}
 		return fmt.Errorf("slot runtime remove container failed: %w", err)
 	}
 	slot.ContainerStatus = optionalString("removed")
@@ -232,6 +248,22 @@ func parseSlotIndex(slotID string) (int, bool) {
 	}
 	value, err := strconv.Atoi(trimmed)
 	return value, err == nil && value >= 0
+}
+
+// isContainerAlreadyMissing 判断 Docker 删除失败是否只是“容器已不存在”。
+//
+// 当前 Docker HTTP API 在这类场景下通常会返回：
+// - status=404
+// - body={"message":"No such container: ..."}
+//
+// 这里保持最小字符串匹配，是因为 Edge 层已经把 HTTP 错误折叠成文本；
+// 后续如果 Docker 错误模型单独结构化，可以再收紧成状态码判断。
+func isContainerAlreadyMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no such container")
 }
 
 func findAvailableTCPPort(start int) (int, error) {

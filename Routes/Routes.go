@@ -128,6 +128,17 @@ func registerStaticIfExists(r *gin.Engine, path string, localDir string) {
 }
 
 func registerNoVNCStatic(r *gin.Engine) {
+	// noVNC 静态资源现在必须优先从新 Client 自己的 `public/vendor/novnc` 提供。
+	//
+	// 设计来源：
+	// - WebVNC 页面会直接 import `/vendor/novnc/core/rfb.js`；
+	// - 如果镜像里没有这套前端资源，页面虽然能打开，但远端部署时会因为 `rfb.js 404` 完全无法建立连接；
+	// - 之前依赖 `Private_Browser_Client_Old` 邻居目录兜底，只适合本地开发，不适合 Docker 正式部署。
+	//
+	// 维护边界：
+	// - 正式镜像必须包含第一候选目录；
+	// - 第二候选目录只保留给本地历史环境兜底，避免开发时因为未同步静态资源而完全打不开页面；
+	// - 后续如果新仓库已经稳定携带 noVNC，可考虑把 Old 兜底彻底删除，继续收紧事实源。
 	candidates := []string{
 		filepath.Join(Settings.Conf.ProjectRoot, "public", "vendor", "novnc"),
 		filepath.Clean(filepath.Join(Settings.Conf.ProjectRoot, "..", "Private_Browser_Client_Old", "public", "vendor", "novnc")),

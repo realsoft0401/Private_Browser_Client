@@ -128,7 +128,18 @@ func (s *Service) DeleteSlotByID(slotID string) error {
 		return err
 	}
 	if err := slotRuntimeService.GetInitializer().Destroy(slot); err != nil {
-		return err
+		// destroy-slot 的业务目标是“把 slot 当前资源位删除干净”，
+		// 所以如果底层容器其实早就被手工删掉或异常消失，不应继续用 404 挡住 slot 删除。
+		//
+		// 这里把 missing container 容错再上提一层，而不是只留在 DockerInitializer，
+		// 是因为测试替身或后续其它 Initializer 也可能直接返回同类错误。
+		if isMissingContainerDestroyError(err) {
+			slot.ContainerID = nil
+			slot.ContainerName = nil
+			slot.ContainerStatus = optionalString("removed")
+		} else {
+			return err
+		}
 	}
 	if err := slotDao.NewDeleteModelHandler().DeleteSlotByID(slotID); err != nil {
 		return err
@@ -209,4 +220,17 @@ func validateSlotIDFormat(slotID string) error {
 		return fmt.Errorf("slotId 格式必须是 slot001 这种 3 位编号形式")
 	}
 	return nil
+}
+
+// isMissingContainerDestroyError 判断 destroy-slot 失败是否只是“底层容器已经不存在”。
+//
+// 注意：
+// - 这里只服务 slot 删除 / 重置链路的受控缺失容错；
+// - 不用于其它 Docker 失败场景；
+// - 这样可以保证用户显式删除 slot 时，已经消失的容器不会成为永久脏状态。
+func isMissingContainerDestroyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "no such container")
 }
