@@ -182,6 +182,19 @@ func DeletePackage(c *gin.Context) {
 	HttpResponse.ResponseSuccess(c, result)
 }
 
+// DeleteImage 是正式 browser-env `/del` 接口的 HTTP 入口。
+//
+// 这条接口只处理当前 env 关联镜像，不进入 task/SSE。
+// 原因已经在需求里收口：镜像删除是单次同步动作，不应该伪装成长链路生命周期任务。
+func DeleteImage(c *gin.Context) {
+	result, err := NewService().DeleteImage(c.Param("envId"))
+	if err != nil {
+		responseBrowserEnvError(c, err)
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
 func responseBrowserEnvError(c *gin.Context, err error) {
 	var businessErr *BusinessError
 	switch {

@@ -77,6 +77,7 @@ func Setup() *gin.Engine {
 	edge.POST("/browser-envs/:envId/restore", BrowserEnvService.Restore)
 	edge.POST("/browser-envs/:envId/revalidate", BrowserEnvService.Revalidate)
 	edge.POST("/browser-envs/import-package", BrowserEnvService.ImportPackage)
+	edge.DELETE("/browser-envs/:envId/del", BrowserEnvService.DeleteImage)
 	edge.DELETE("/browser-envs/:envId/package", BrowserEnvService.DeletePackage)
 	edge.GET("/tasks/:taskId", TaskService.GetDetail)
 	edge.GET("/tasks/:taskId/events", TaskService.SubscribeEvents)

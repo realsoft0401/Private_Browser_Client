@@ -88,10 +88,6 @@ Slot 资源位：
 
 - [patch-browser-env-proxy.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/patch-browser-env-proxy.md)
 - [patch-browser-env-proxy-mode.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/patch-browser-env-proxy-mode.md)
-- [backup-browser-env.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/backup-browser-env.md)
-- [restore-browser-env.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/restore-browser-env.md)
-- [revalidate-browser-env.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/revalidate-browser-env.md)
-- [import-browser-env-package.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/import-browser-env-package.md)
 
 ## 当前统一响应口径
 

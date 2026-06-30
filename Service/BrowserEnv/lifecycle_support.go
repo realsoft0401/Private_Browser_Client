@@ -110,6 +110,24 @@ func verifyBackupArchiveFile(index *model.BrowserEnvIndex, backupAbs string) err
 	return nil
 }
 
+// isDockerImageAlreadyMissingError 识别 Docker remove image 的“镜像已不存在”受控结果。
+//
+// 设计来源：
+// - `/del` 的目标是把本机不再需要的运行镜像清干净；
+// - 如果镜像原本就不存在，业务上应视为已经达成“无需再删”的结果，而不是系统失败；
+// - 这里单独收口字符串判断，是为了避免把 Docker 文案解析散落到 BrowserEnv Service 主链里。
+//
+// 职责边界：
+// - 这里只识别“镜像已不存在”这类可接受结果；
+// - 镜像仍被引用、Docker 不可达、权限不足等都不在这里吞掉，必须继续向上报错。
+func isDockerImageAlreadyMissingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "no such image") || strings.Contains(message, "not found")
+}
+
 func loadPackageProfileFromIndex(index *model.BrowserEnvIndex) (string, model.ProfileFile, error) {
 	envPath, err := resolveManagedEnvPath(index)
 	if err != nil {

@@ -436,6 +436,100 @@ func (s *Service) DeletePackage(envID string) (*model.TaskAcceptedResponse, erro
 	}, nil
 }
 
+// DeleteImage 删除当前环境包声明的运行镜像，但不触碰环境包资产本身。
+//
+// 设计来源：
+// - 用户已经把 `/del` 和 `/package` 的边界明确拆开：前者只清理镜像，后者才是彻底删资产；
+// - 旧文档里这条接口已经收口，但新 Client 一直没有真正实现，导致中心层也无法正式开放；
+// - 这里补实现时必须继续守住“不删目录、不改索引状态、不自动 stop”的原则，避免以后又和 package delete 混回一起。
+//
+// 职责边界：
+// - 负责读取当前 env 的 `profile.runtime.image`；
+// - 负责同步调用本机 Docker remove image；
+// - 只返回镜像删除事实，不回写 browser_envs 主状态，不删 browser-data/profile。
+func (s *Service) DeleteImage(envID string) (*model.DeleteBrowserEnvImageResponse, error) {
+	envID = strings.TrimSpace(envID)
+	if envID == "" {
+		return nil, invalidError("envId 不能为空")
+	}
+
+	index, err := loadBrowserEnvIndexOrFail(envID)
+	if err != nil {
+		return nil, err
+	}
+
+	// `/del` 只允许针对仍有正式环境目录的非运行态 env。
+	// backed_up 场景下 profile 已经被归档移走，继续删镜像会丢失“从哪条正式资产读取 image”这个边界。
+	switch index.Status {
+	case model.BrowserEnvStatusRunning:
+		return nil, conflictError("环境包正在运行，请先停止后再删除镜像")
+	case model.BrowserEnvStatusDeleted:
+		return nil, conflictError("环境包已删除，不能再删除镜像")
+	case model.BrowserEnvStatusBackedUp:
+		return nil, conflictError("环境包当前只有备份包，请先 restore 后再删除镜像")
+	}
+	if _, err = runtimeService.NewService().GetByPackageID(envID); err == nil {
+		return nil, conflictError("环境包正在运行，请先停止后再删除镜像")
+	} else if !errors.Is(err, common.ErrNotFound) {
+		return nil, internalError(err.Error())
+	}
+
+	pkg, err := loadPackage(index)
+	if err != nil {
+		return nil, err
+	}
+	image := strings.TrimSpace(pkg.Profile.Runtime.Image)
+	if image == "" {
+		return nil, invalidError("runtime.image 不能为空")
+	}
+
+	edge := edgeService.NewEdgeService()
+	if _, err = edge.GetDockerStatus(); err != nil {
+		return nil, internalError("Docker 不可达，不能删除运行镜像: " + err.Error())
+	}
+
+	results, err := edge.RemoveDockerImage(&edgeModel.RemoveImageRequest{
+		Image:   image,
+		Force:   false,
+		NoPrune: false,
+	})
+	if err != nil {
+		if isDockerImageAlreadyMissingError(err) {
+			return &model.DeleteBrowserEnvImageResponse{
+				EnvID:          envID,
+				Image:          image,
+				ImageRemoved:   false,
+				Results:        []model.DeleteBrowserEnvImageResult{},
+				WarningMessage: "image already missing",
+				DeletedAt:      time.Now().Unix(),
+			}, nil
+		}
+		return nil, internalError("删除运行镜像失败: " + err.Error())
+	}
+
+	imageRemoved := false
+	mappedResults := make([]model.DeleteBrowserEnvImageResult, 0, len(results))
+	for _, item := range results {
+		if strings.TrimSpace(item.Deleted) != "" || strings.TrimSpace(item.Untagged) != "" {
+			imageRemoved = true
+		}
+		mappedResults = append(mappedResults, model.DeleteBrowserEnvImageResult{
+			Image:    image,
+			Deleted:  item.Deleted,
+			Untagged: item.Untagged,
+		})
+	}
+
+	return &model.DeleteBrowserEnvImageResponse{
+		EnvID:          envID,
+		Image:          image,
+		ImageRemoved:   imageRemoved,
+		Results:        mappedResults,
+		WarningMessage: "",
+		DeletedAt:      time.Now().Unix(),
+	}, nil
+}
+
 // UpdateProxy 修改环境包代理配置并把运行保护摘要重置为 pending。
 func (s *Service) UpdateProxy(envID string, request *model.UpdateBrowserEnvProxyRequest) (*model.UpdateBrowserEnvProxyResponse, error) {
 	envID = strings.TrimSpace(envID)

@@ -27,7 +27,12 @@
 - `GET /api/v1/edge/browser-envs/{envId}`
 - `POST /api/v1/edge/browser-envs/{envId}/run`
 - `POST /api/v1/edge/browser-envs/{envId}/stop`
+- `DELETE /api/v1/edge/browser-envs/{envId}/del`
 - `DELETE /api/v1/edge/browser-envs/{envId}/package`
+- `POST /api/v1/edge/browser-envs/{envId}/backup`
+- `POST /api/v1/edge/browser-envs/{envId}/restore`
+- `POST /api/v1/edge/browser-envs/{envId}/revalidate`
+- `POST /api/v1/edge/browser-envs/import-package`
 - `GET /api/v1/edge/tasks/{taskId}`
 - `GET /api/v1/edge/tasks/{taskId}/events`
 - `GET /api/v1/edge/docker/status`
@@ -41,13 +46,8 @@
 
 ## 已完成正式文档、待代码实现
 
-- `DELETE /api/v1/edge/browser-envs/{envId}/del`
 - `PATCH /api/v1/edge/browser-envs/{envId}/proxy`
 - `PATCH /api/v1/edge/browser-envs/{envId}/proxy-mode`
-- `POST /api/v1/edge/browser-envs/{envId}/backup`
-- `POST /api/v1/edge/browser-envs/{envId}/restore`
-- `POST /api/v1/edge/browser-envs/{envId}/revalidate`
-- `POST /api/v1/edge/browser-envs/import-package`
 
 这些接口保留在文档与 OpenAPI 中，是为了先把正式协议、状态机、SSE 和错误口径固定下来，后续直接按既定协议实现。
 

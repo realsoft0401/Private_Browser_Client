@@ -43,6 +43,27 @@ type StopResponse struct {
 	StoppedAt       int64  `json:"stoppedAt"`
 }
 
+// DeleteBrowserEnvImageResponse 是正式 browser-env `/del` 接口的同步结果。
+//
+// 设计来源：
+// - `/del` 只表达“本机运行镜像处理结果”，不是环境包生命周期 task；
+// - 调用方最关心的是删的是哪张镜像、Docker 是否真的删掉、如果没删掉原因是什么；
+// - 因此这里返回镜像删除摘要，而不把浏览器环境状态字段重新包装成第二套假状态。
+type DeleteBrowserEnvImageResult struct {
+	Image    string `json:"image"`
+	Deleted  string `json:"deleted,omitempty"`
+	Untagged string `json:"untagged,omitempty"`
+}
+
+type DeleteBrowserEnvImageResponse struct {
+	EnvID          string                        `json:"envId"`
+	Image          string                        `json:"image"`
+	ImageRemoved   bool                          `json:"imageRemoved"`
+	Results        []DeleteBrowserEnvImageResult `json:"results"`
+	WarningMessage string                        `json:"warningMessage"`
+	DeletedAt      int64                         `json:"deletedAt"`
+}
+
 // ListBrowserEnvResponse 是环境包列表接口响应。
 //
 // 列表只返回轻量摘要和统计，不返回代理明文、指纹 raw 或 browser-data 内容；
