@@ -74,26 +74,20 @@ Client 后期需要支持 UDP discovery / beacon，用于在独立内网中让 S
 - `public/scalar.html`
 - `/scalar`
 
+访问方式和 `/swagger` 一样，直接走 Client 主服务：
+
+```text
+http://127.0.0.1:3300/scalar
+```
+
+其中 `/scalar` 是唯一正式入口，避免 API 文档页出现多个访问口径。
+
 当前 `Scalar` 展示页的 Client Libraries 口径只保留：
 
 - Python
 - Go
 - Java
 - PHP
-
-如果要把当前 OpenAPI 单独打成 `Scalar` 文档容器，可直接使用：
-
-```bash
-cd /Users/lining/Documents/Browser_virtualization/Private_Browser_Client
-docker build -f Dockerfile.scalar -t private-browser-client-scalar:latest .
-docker run --rm -p 13300:8080 private-browser-client-scalar:latest
-```
-
-访问地址：
-
-```text
-http://127.0.0.1:13300/
-```
 
 ## Client 镜像构建
 
@@ -148,11 +142,11 @@ GOSUMDB=sum.golang.org \
 ./scripts/build-client-image.sh --platform linux/amd64 --image private-browser-client --tag amd64
 ```
 
-这里必须注意区分：
+这里必须注意：
 
-- `13300` 是独立 `Scalar` 文档页端口
-- `3300` 仍然是 `Private_Browser_Client` 的真实 API 服务地址
-- 文档页即使跑在 `13300`，页面里默认理解的 API 目标仍应是 `http://127.0.0.1:3300`
+- `3300` 是 `Private_Browser_Client` 的真实 API 服务地址
+- `/swagger` 和 `/scalar` 都挂在同一个 Client 服务内
+- 后续不再维护独立 Scalar 展示服务，避免文档服务地址和真实 API 地址再次混淆
 
 ## WebVNC 边界
 

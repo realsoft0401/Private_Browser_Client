@@ -14,7 +14,7 @@ info:
     除 `/health` 外，当前业务接口统一返回 HTTP 200 + JSON `code/message/data` 包装。
 servers:
   - url: http://127.0.0.1:3300
-    description: 当前本地开发与联调默认 Edge API 服务入口；无论是 Swagger 页还是独立 Scalar 文档容器，默认都应指向这台 3300 服务。
+    description: 当前本地开发与联调默认 Edge API 服务入口；Swagger 与 Scalar 页面都挂在这台 3300 Client 服务内。
   - url: /
     description: 当前打开文档页的同源入口；只作为兜底，不应替代正式联调默认地址 127.0.0.1:3300。
 paths:

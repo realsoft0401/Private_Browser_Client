@@ -37,8 +37,14 @@
   <body>
     <div class="api-target">
       API Target:
-      <strong>http://127.0.0.1:3300</strong>
+      <strong id="api-target-origin">current origin</strong>
     </div>
+    <script>
+      // Scalar 已经和 Client 服务集成在同一个 3300 进程里。
+      // 这里不能写死 127.0.0.1，否则远端访问 192.168.x.x:3300/scalar 时页面会误导使用者。
+      document.getElementById("api-target-origin").textContent =
+        window.location.origin;
+    </script>
     <script
       id="api-reference"
       data-url="/openapi.yaml"
