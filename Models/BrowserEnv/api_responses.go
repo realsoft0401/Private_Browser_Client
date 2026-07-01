@@ -26,6 +26,18 @@ type UpdateBrowserEnvProxyResponse struct {
 	ProxyRuntimeStatus      string `json:"proxyRuntimeStatus"`
 }
 
+// UpdateBrowserEnvRuntimeImageResponse 返回 runtime.image 的同步修改结果。
+//
+// 这里刻意返回 previousImage 和 image，方便管理员确认修改的是环境包运行契约，
+// 而不是误以为当前 slot 或当前容器已经切换到新镜像。
+type UpdateBrowserEnvRuntimeImageResponse struct {
+	EnvID         string `json:"envId"`
+	Status        string `json:"status"`
+	PreviousImage string `json:"previousImage"`
+	Image         string `json:"image"`
+	UpdatedAt     int64  `json:"updatedAt"`
+}
+
 // TaskAcceptedResponse 是正式 browser-env 长链路接口统一返回的接单结果。
 type TaskAcceptedResponse struct {
 	TaskID       string `json:"taskId"`

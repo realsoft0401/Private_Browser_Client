@@ -553,6 +553,14 @@ func optionalInt64(value int64) *int64 {
 	return &value
 }
 
+func copyOptionalInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
 func maybeRemoveContainer(containerID *string) error {
 	if containerID == nil || strings.TrimSpace(*containerID) == "" {
 		return nil

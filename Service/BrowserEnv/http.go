@@ -120,6 +120,27 @@ func UpdateProxy(c *gin.Context) {
 	HttpResponse.ResponseSuccess(c, result)
 }
 
+// UpdateRuntimeImage 是正式 browser-env 运行镜像修改接口的 HTTP 入口。
+//
+// 这条接口是同步配置修改，不是 task/SSE：
+// - HTTP 层只解析 JSON；
+// - Service 层负责 created/stopped 可编辑态准入、文件落盘和 SQLite 摘要回写；
+// - 不在路由层顺手触发 pull/run/reinit，避免 API 边界被绕开。
+func UpdateRuntimeImage(c *gin.Context) {
+	var request model.UpdateBrowserEnvRuntimeImageRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		HttpResponse.ResponseErrorWithMsg(c, HttpResponse.CodeInvalidParams, "请求体解析失败，请检查 image")
+		return
+	}
+
+	result, err := NewService().UpdateRuntimeImage(c.Param("envId"), &request)
+	if err != nil {
+		responseBrowserEnvError(c, err)
+		return
+	}
+	HttpResponse.ResponseSuccess(c, result)
+}
+
 // Backup 是正式 browser-env backup 接口的 HTTP 入口。
 func Backup(c *gin.Context) {
 	result, err := NewService().Backup(c.Param("envId"))

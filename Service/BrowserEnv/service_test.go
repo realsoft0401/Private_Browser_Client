@@ -1,6 +1,7 @@
 package BrowserEnv
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -156,6 +157,20 @@ func TestRunCreatesTaskAndPublishesCompletion(t *testing.T) {
 	}
 	if event.ResourceID != envID {
 		t.Fatalf("Run() resource id = %s, want %s", event.ResourceID, envID)
+	}
+	slot, err := slotService.NewService().GetSlotByID(slotID)
+	if err != nil {
+		t.Fatalf("GetSlotByID() error = %v", err)
+	}
+	index, err := browserEnvDao.NewRuntimeModelHandler().GetBrowserEnvIndexByID(envID)
+	if err != nil {
+		t.Fatalf("GetBrowserEnvIndexByID() error = %v", err)
+	}
+	if slot.CDPPort == nil || slot.VNCPort == nil {
+		t.Fatalf("slot ports should be allocated")
+	}
+	if index.CDPPort != *slot.CDPPort || index.VNCPort != *slot.VNCPort {
+		t.Fatalf("env ports = %d/%d, want slot ports %d/%d", index.CDPPort, index.VNCPort, *slot.CDPPort, *slot.VNCPort)
 	}
 }
 
@@ -324,6 +339,73 @@ func TestDeletePackageRejectsRunningRelation(t *testing.T) {
 	}
 }
 
+func TestUpdateRuntimeImageAllowsCreatedAndStopped(t *testing.T) {
+	env := mustCreateBrowserEnvForTest(t, "906090008", "tk", "runtime-image-test")
+	nextImage := "crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.2-amd64"
+
+	response, err := NewService().UpdateRuntimeImage(env.EnvID, &model.UpdateBrowserEnvRuntimeImageRequest{
+		Image: nextImage,
+	})
+	if err != nil {
+		t.Fatalf("UpdateRuntimeImage(created) error = %v", err)
+	}
+	if response.Image != nextImage {
+		t.Fatalf("UpdateRuntimeImage(created) image = %s, want %s", response.Image, nextImage)
+	}
+
+	if err := browserEnvDao.NewRuntimeModelHandler().UpdateBrowserEnvRuntime(&model.BrowserEnvRuntimeUpdate{
+		EnvID:           env.EnvID,
+		Status:          model.BrowserEnvStatusStopped,
+		ContainerStatus: model.ContainerStatusMissing,
+		MonitorStatus:   model.MonitorStatusUnknown,
+		UpdatedAt:       time.Now().Unix(),
+	}); err != nil {
+		t.Fatalf("UpdateBrowserEnvRuntime(stopped) error = %v", err)
+	}
+
+	stoppedImage := "crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.2.1-amd64"
+	response, err = NewService().UpdateRuntimeImage(env.EnvID, &model.UpdateBrowserEnvRuntimeImageRequest{
+		Image: stoppedImage,
+	})
+	if err != nil {
+		t.Fatalf("UpdateRuntimeImage(stopped) error = %v", err)
+	}
+	if response.Image != stoppedImage {
+		t.Fatalf("UpdateRuntimeImage() response image = %s previous = %s", response.Image, response.PreviousImage)
+	}
+
+	envPath := filepath.Join(Settings.Conf.ProjectRoot, filepath.FromSlash(env.EnvPath))
+	var profile model.ProfileFile
+	if err = readTestJSON(filepath.Join(envPath, "profile.json"), &profile); err != nil {
+		t.Fatalf("read profile.json error = %v", err)
+	}
+	if profile.Runtime.Image != stoppedImage {
+		t.Fatalf("profile runtime image = %s, want %s", profile.Runtime.Image, stoppedImage)
+	}
+	var container model.ContainerFile
+	if err = readTestJSON(filepath.Join(envPath, "container.json"), &container); err != nil {
+		t.Fatalf("read container.json error = %v", err)
+	}
+	if container.Image != stoppedImage {
+		t.Fatalf("container image = %s, want %s", container.Image, stoppedImage)
+	}
+
+	if err = browserEnvDao.NewRuntimeModelHandler().UpdateBrowserEnvRuntime(&model.BrowserEnvRuntimeUpdate{
+		EnvID:           env.EnvID,
+		Status:          model.BrowserEnvStatusRunning,
+		ContainerStatus: model.ContainerStatusRunning,
+		MonitorStatus:   model.MonitorStatusUnknown,
+		UpdatedAt:       time.Now().Unix(),
+	}); err != nil {
+		t.Fatalf("UpdateBrowserEnvRuntime() error = %v", err)
+	}
+	if _, err = NewService().UpdateRuntimeImage(env.EnvID, &model.UpdateBrowserEnvRuntimeImageRequest{
+		Image: "crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.3-amd64",
+	}); !isConflictBusinessError(err) {
+		t.Fatalf("UpdateRuntimeImage() running error = %v, want conflict", err)
+	}
+}
+
 func mustCreateBrowserEnvForTest(t *testing.T, userID string, rpaType string, name string) *model.CreateBrowserEnvResponse {
 	t.Helper()
 
@@ -356,6 +438,19 @@ func mustCreateBrowserEnvForTest(t *testing.T, userID string, rpaType string, na
 	return result
 }
 
+func readTestJSON(path string, target any) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(body, target)
+}
+
+func isConflictBusinessError(err error) bool {
+	var businessErr *BusinessError
+	return errors.As(err, &businessErr) && businessErr.Kind == errorKindConflict
+}
+
 func waitTaskDoneEvent(t *testing.T, taskID string) taskModel.Event {
 	t.Helper()
 
@@ -384,6 +479,12 @@ func (f fakeBrowserEnvSlotInitializer) Initialize(slot *slotModel.Slot) error {
 	slot.ContainerName = optionalTestString("fake-container-name")
 	slot.RuntimeImage = optionalTestString("fake-image")
 	slot.ContainerStatus = optionalTestString("running")
+	if slot.CDPPort == nil {
+		slot.CDPPort = optionalTestInt(19201)
+	}
+	if slot.VNCPort == nil {
+		slot.VNCPort = optionalTestInt(19101)
+	}
 	return nil
 }
 
@@ -409,6 +510,10 @@ func fakeSlotRuntimeRebuilder(slot *slotModel.Slot, _ *loadedPackage) (*edgeMode
 }
 
 func optionalTestString(value string) *string {
+	return &value
+}
+
+func optionalTestInt(value int) *int {
 	return &value
 }
 

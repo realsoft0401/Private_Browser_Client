@@ -638,6 +638,93 @@ func (s *Service) UpdateProxy(envID string, request *model.UpdateBrowserEnvProxy
 	}, nil
 }
 
+// UpdateRuntimeImage 修改环境包后续 run 使用的正式运行镜像。
+//
+// 设计来源：
+// - 用户明确区分了 slot 基础镜像和 browser-env 正式 runtime.image；
+// - 修改 env 镜像不能通过 run 请求体临时覆盖，也不能借 slot reinit 偷改；
+// - 因此这里提供独立短链路，只修改 profile/container 文件中的运行契约。
+//
+// 职责边界：
+//   - 只允许 `created/stopped` 修改。created 是首次运行前配置态，stopped 是运行后已释放
+//     slot/container 关系的干净隔离态；
+//   - 只写 profile.runtime.image、container.json.image 和 SQLite updated_at/last_error；
+//   - 不拉镜像、不启动容器、不重建 slot、不删除旧镜像。
+func (s *Service) UpdateRuntimeImage(envID string, request *model.UpdateBrowserEnvRuntimeImageRequest) (*model.UpdateBrowserEnvRuntimeImageResponse, error) {
+	envID = strings.TrimSpace(envID)
+	if envID == "" {
+		return nil, invalidError("envId 不能为空")
+	}
+	if request == nil {
+		return nil, invalidError("请求参数不能为空")
+	}
+
+	image, err := normalizeRuntimeImage(request.Image)
+	if err != nil {
+		return nil, err
+	}
+	index, err := loadBrowserEnvIndexOrFail(envID)
+	if err != nil {
+		return nil, err
+	}
+	if !isBrowserEnvRuntimeImageEditableState(index.Status) {
+		return nil, conflictError(fmt.Sprintf("环境包当前状态为 %s，只有 created 或 stopped 状态才允许修改 runtime.image", index.Status))
+	}
+
+	pkg, err := loadPackage(index)
+	if err != nil {
+		return nil, err
+	}
+	previousImage := strings.TrimSpace(pkg.Profile.Runtime.Image)
+	now := time.Now().Unix()
+	pkg.Profile.Runtime.Image = image
+	pkg.Profile.Metadata.UpdatedAt = now
+	if pkg.HasContainer {
+		pkg.Container.Image = image
+		pkg.Container.UpdatedAt = now
+	}
+
+	if err = writePackageJSON(pkg.EnvPath, pkg.Profile.Paths.Profile, pkg.Profile); err != nil {
+		return nil, internalError(fmt.Sprintf("写入 profile.runtime.image 失败: %v", err))
+	}
+	if pkg.HasContainer {
+		if err = writePackageJSON(pkg.EnvPath, pkg.Profile.Paths.Container, pkg.Container); err != nil {
+			return nil, internalError(fmt.Sprintf("写入 container.json.image 失败: %v", err))
+		}
+	}
+	if err = browserEnvDao.NewConfigModelHandler().UpdateBrowserEnvConfig(&model.BrowserEnvConfigUpdate{
+		EnvID:     envID,
+		Status:    index.Status,
+		LastError: nil,
+		UpdatedAt: now,
+	}); err != nil {
+		return nil, internalError(err.Error())
+	}
+
+	return &model.UpdateBrowserEnvRuntimeImageResponse{
+		EnvID:         envID,
+		Status:        index.Status,
+		PreviousImage: previousImage,
+		Image:         image,
+		UpdatedAt:     now,
+	}, nil
+}
+
+// isBrowserEnvRuntimeImageEditableState 判断当前环境包是否允许修改 runtime.image。
+//
+// 设计来源：
+// - created 是首次运行前配置态，允许调整尚未投入运行的镜像契约；
+// - stopped 是运行后已经释放 slot/container 关系的干净隔离态，也允许调整下一次 run 的镜像契约；
+// - running/backed_up/deleted/error 都不能修改，避免配置契约和运行/归档/异常事实漂移。
+func isBrowserEnvRuntimeImageEditableState(status string) bool {
+	switch strings.TrimSpace(status) {
+	case model.BrowserEnvStatusCreated, model.BrowserEnvStatusStopped:
+		return true
+	default:
+		return false
+	}
+}
+
 // Backup 为环境包创建正式备份任务。
 func (s *Service) Backup(envID string) (*model.TaskAcceptedResponse, error) {
 	envID = strings.TrimSpace(envID)
@@ -812,6 +899,8 @@ func (s *Service) executeRun(taskID string, envID string, request model.RunReque
 	_ = browserEnvDao.NewRuntimeModelHandler().UpdateBrowserEnvRuntime(&model.BrowserEnvRuntimeUpdate{
 		EnvID:           envID,
 		Status:          model.BrowserEnvStatusRunning,
+		CDPPort:         copyOptionalInt(slot.CDPPort),
+		VNCPort:         copyOptionalInt(slot.VNCPort),
 		ContainerID:     optionalString(created.ID),
 		ContainerName:   slot.ContainerName,
 		ContainerStatus: model.ContainerStatusRunning,

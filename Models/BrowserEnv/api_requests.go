@@ -56,6 +56,16 @@ type UpdateBrowserEnvProxyRequest struct {
 	ConfigBase64 *string `json:"configBase64"`
 }
 
+// UpdateBrowserEnvRuntimeImageRequest 是修改环境包正式运行镜像的请求体。
+//
+// 设计边界：
+// - 这里只允许修改后续 run 使用的 runtime.image；
+// - 不允许顺手传 slotId、force、Docker HostConfig 或代理/指纹参数；
+// - 镜像拉取、slot 重初始化和真正 run 必须走各自正式接口，不能在这条短链路里串联。
+type UpdateBrowserEnvRuntimeImageRequest struct {
+	Image string `json:"image"`
+}
+
 // RunRequest 是正式 browser-env run 接口的请求体。
 //
 // 这次先严格按文档收口，只接受 slotId 和 forceRecreate；

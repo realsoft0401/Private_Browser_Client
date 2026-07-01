@@ -59,3 +59,7 @@
 - 已存在 slot 必须保留自己当前实际 `runtimeImage`，不能因为默认值更新自动漂移。
 - 老 slot 升级基础镜像必须走显式重初始化链路，成功后仍视为原 slot 恢复 `waiting`。
 - browser-env 的 `runtime.image` 不能因为 slot 默认镜像变化被自动改写。
+- browser-env 正式运行镜像只能通过受控 runtime-image 修改接口显式变更。
+- 修改 browser-env `runtime.image` 时，目标环境包必须处于 `created` 或 `stopped` 状态，不能在 `loading/running/ending/backed_up/deleted/error` 状态下修改。
+- `created` 表示首次运行前配置态；`stopped` 表示运行后已与 slot/container 彻底隔离的干净态；二者都允许修改 runtime.image。
+- 修改 browser-env `runtime.image` 后不自动 run、不自动 pull image、不自动 reinit slot，下一次 run 才使用新镜像。

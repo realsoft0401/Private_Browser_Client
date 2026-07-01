@@ -73,6 +73,7 @@ func Setup() *gin.Engine {
 	edge.POST("/browser-envs/:envId/run", BrowserEnvService.Run)
 	edge.POST("/browser-envs/:envId/stop", BrowserEnvService.Stop)
 	edge.PATCH("/browser-envs/:envId/proxy", BrowserEnvService.UpdateProxy)
+	edge.PATCH("/browser-envs/:envId/runtime-image", BrowserEnvService.UpdateRuntimeImage)
 	edge.POST("/browser-envs/:envId/backup", BrowserEnvService.Backup)
 	edge.POST("/browser-envs/:envId/restore", BrowserEnvService.Restore)
 	edge.POST("/browser-envs/:envId/revalidate", BrowserEnvService.Revalidate)

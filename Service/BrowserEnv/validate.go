@@ -9,6 +9,7 @@ import (
 )
 
 var userIDRe = regexp.MustCompile(`^\d+$`)
+var dockerImageRefRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$`)
 
 const (
 	defaultListPage     = 1
@@ -91,6 +92,24 @@ func normalizeCreateRequest(param *model.CreateBrowserEnvRequest) (*model.Create
 	param.Proxy.ConfigBase64 = ""
 	param.Proxy.Config = ""
 	return param, nil
+}
+
+// normalizeRuntimeImage 清洗受控 runtime.image 修改入参。
+//
+// 这条校验只做最轻量的 Docker image 引用保护：
+// - 必须非空；
+// - 不能包含空白字符；
+// - 不能携带 shell 特殊文本或 JSON 片段。
+// 真正镜像是否存在、是否可拉取，仍由 pull-image/run 链路在 Docker 层给出明确错误。
+func normalizeRuntimeImage(image string) (string, error) {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return "", invalidError("runtime.image 不能为空")
+	}
+	if !dockerImageRefRe.MatchString(image) {
+		return "", invalidError("runtime.image 格式非法，请传完整 Docker image 引用")
+	}
+	return image, nil
 }
 
 // normalizeListQuery 统一清洗 browser-env 列表查询条件。

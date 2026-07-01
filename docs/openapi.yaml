@@ -551,6 +551,38 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/ApiResponseUpdateBrowserEnvProxy'
                   - $ref: '#/components/schemas/ApiResponseTaskAccepted'
+  /api/v1/edge/browser-envs/{envId}/runtime-image:
+    patch:
+      summary: Update browser env runtime image
+      description: |
+        同步 HTTP 接口，只修改指定 browser-env 后续 run 使用的 `profile.runtime.image`。
+
+        业务边界：
+        - 只允许 browser-env 处于 created 或 stopped 状态时修改
+        - `created` 表示首次运行前配置态；`stopped` 表示运行后已与 slot/container 彻底隔离的干净态
+        - 不自动 run
+        - 不自动 pull image
+        - 不自动 reinit slot
+        - 不修改 slot 当前实际 `runtimeImage`
+
+        SSE 说明：
+        - 本接口不使用 SSE
+        - 原因：这是短链路配置修改动作，普通 HTTP 已足够表达成功或失败
+      parameters:
+        - $ref: '#/components/parameters/EnvID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBrowserEnvRuntimeImageRequest'
+      responses:
+        '200':
+          description: Runtime image update result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseUpdateBrowserEnvRuntimeImage'
   /api/v1/edge/browser-envs/{envId}/proxy-mode:
     patch:
       summary: Update browser env proxy mode
@@ -842,6 +874,13 @@ components:
           properties:
             data:
               $ref: '#/components/schemas/UpdateBrowserEnvProxyResponse'
+    ApiResponseUpdateBrowserEnvRuntimeImage:
+      allOf:
+        - $ref: '#/components/schemas/ApiResponseBase'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/UpdateBrowserEnvRuntimeImageResponse'
     ApiResponseUpdateBrowserEnvProxyMode:
       allOf:
         - $ref: '#/components/schemas/ApiResponseBase'
@@ -1786,6 +1825,35 @@ components:
         proxyRuntimeStatus:
           type: string
           example: pending
+    UpdateBrowserEnvRuntimeImageRequest:
+      type: object
+      required:
+        - image
+      properties:
+        image:
+          type: string
+          description: 完整 Docker image 引用；不拆 repository/tag
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.2-amd64
+    UpdateBrowserEnvRuntimeImageResponse:
+      type: object
+      properties:
+        envId:
+          type: string
+          example: 906090001_tk_324867594169356288
+        status:
+          type: string
+          description: 当前 env 状态；本接口只允许 created 或 stopped 修改
+          example: stopped
+        previousImage:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.1-amd64
+        image:
+          type: string
+          example: crpi-6s60spbjvluac8j8.cn-shanghai.personal.cr.aliyuncs.com/ln0216/private_browser_edge:1.2-amd64
+        updatedAt:
+          type: integer
+          format: int64
+          example: 1782800010
     UpdateBrowserEnvProxyModeRequest:
       type: object
       required:

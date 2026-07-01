@@ -88,6 +88,7 @@ Slot 资源位：
 
 - [patch-browser-env-proxy.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/patch-browser-env-proxy.md)
 - [patch-browser-env-proxy-mode.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/patch-browser-env-proxy-mode.md)
+- [patch-browser-env-runtime-image.md](/Users/lining/Documents/Browser_virtualization/Private_Browser_Client/docs/api/patch-browser-env-runtime-image.md)
 
 ## 当前统一响应口径
 
