@@ -2,6 +2,7 @@ package Task
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -107,6 +108,16 @@ func (s *Service) publish(taskID string, event model.Event, markDone bool) error
 
 	item.events = append(item.events, event)
 	item.updatedAt = event.Timestamp
+	// import-package 接单时还不知道 envId，只有后续读取 profile.json 后事件里才会带上。
+	// 这里把非空 resourceId 回填到任务摘要，保证 Node Server 轮询 Edge task detail 时能拿到
+	// 最终 envId，再刷新中心 server_browser_envs；不回填会导致导入成功但中心无法落库。
+	if strings.TrimSpace(item.resourceID) == "" {
+		if strings.TrimSpace(event.ResourceID) != "" {
+			item.resourceID = strings.TrimSpace(event.ResourceID)
+		} else if strings.TrimSpace(event.EnvID) != "" {
+			item.resourceID = strings.TrimSpace(event.EnvID)
+		}
+	}
 	for _, subscriber := range item.subscribers {
 		select {
 		case subscriber <- event:

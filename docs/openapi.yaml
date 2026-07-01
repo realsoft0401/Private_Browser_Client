@@ -367,6 +367,9 @@ paths:
         查询当前 Client 本机的浏览器环境包索引列表。
         这是只读摘要接口，返回分页、简单统计和环境包列表，不返回代理明文、
         fingerprint raw 或 browser-data 登录态内容。
+
+        `userId`、`rpaType`、`status` 都只是可选过滤条件；导入包场景下调用方可能
+        还不知道 userId，因此不传这些条件时返回本机全部未删除环境包。
       parameters:
         - name: userId
           in: query
